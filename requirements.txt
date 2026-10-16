@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+mutagen
+qrcode[pil]
+httpx
+pytest
+
+numpy
+scipy
+imageio-ffmpeg

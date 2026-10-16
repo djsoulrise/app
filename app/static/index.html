@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="sr">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DJ asistent</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <header>
+        <div class="brand">DJ asistent</div>
+        <nav id="nav"></nav>
+        <div id="statusbar"></div>
+        <span id="fsbtns"><button class="sm" data-act="fs" data-d="-2">A-</button><button class="sm" data-act="fs"
+                data-d="2">A+</button></span>
+        <button id="minibtn" data-act="mini" class="sm">Mini</button>
+    </header>
+    <main id="main"></main>
+    <div id="modal" class="hidden">
+        <div class="box" id="modalbox"></div>
+    </div>
+    <div id="toast"></div>
+    <script src="/static/app.js"></script>
+</body>
+
+</html>

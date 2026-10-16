@@ -1,0 +1,38 @@
+name: Windows standalone EXE
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build dependencies
+        run: python -m pip install -r requirements.txt pywebview pyinstaller
+      - name: Test audio analysis and persistent cache
+        run: python -m unittest discover -s tests -p "test_audio*.py" -v
+      - name: Package one executable including FFmpeg
+        run: python -m PyInstaller --noconfirm --clean "DJ asistent.spec"
+      - name: Check packaged EXE without opening a window
+        shell: python
+        run: |
+          import json, os, pathlib, subprocess, tempfile
+          with tempfile.TemporaryDirectory() as folder:
+              report = pathlib.Path(folder) / 'report.json'
+              env = dict(os.environ, DJ_DATA_DIR=str(pathlib.Path(folder) / 'data'))
+              subprocess.run([str(pathlib.Path('dist/DJ asistent.exe').resolve()), '--build-self-test', str(report)], env=env, check=True, timeout=180)
+              result = json.loads(report.read_text(encoding='utf-8'))
+              assert result['ok'] and result['frozen'] and result['decoder_in_bundle'], result
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DJ-Assistant-Windows-Standalone
+          path: dist/DJ asistent.exe
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,80 @@
+DJ ASSISTANT — ORIGINAL MASTER + AUDIO RITAM / GRIDOVI
+
+POKRETANJE (Windows)
+1. Raspakuj ceo ZIP u novi folder.
+2. Pokreni INSTALL-AUDIO.bat jednom. Ovo instalira i nove audio zavisnosti,
+   cak i ako vec postoji .venv od stare verzije. Potrebna je internet veza
+   za instalaciju; audio analiza posle toga radi lokalno.
+3. Pokreni start.bat kao i ranije.
+4. U Podesavanjima proveri putanju collection.nml i muzickih foldera.
+   Uvezi kolekciju. Preporuke odmah rade po originalnom algoritmu.
+5. Otvori Audio ritam > Pokreni / nastavi audio deep scan.
+   Za sken su potrebni stvarni audio fajlovi dostupni na ovom racunaru.
+   Kolekcija .nml sama ne sadrzi zvuk.
+
+PRAVILA PREPORUKA
+- Zadrzane su izvorne tezine, stilska pravila, istorija i rangiranje.
+- Prva cetiri predloga ostaju izvorna, uz uklanjanje ponovljenih pesama.
+- Peti predlog se moze zameniti najboljim dovoljno slicnim audio ritmom.
+- Audio rezultat bira se samo medju kandidatima koji vec prolaze izvorne
+  filtere (zabrane, pusteno, stil, energija, BPM/key). Audio ocena ne koristi
+  nazive pesama, foldere, Comment tagove ili popularnost.
+- Ako audio nije skeniran, nije pouzdan ili nema dovoljno slicnog ritma,
+  OSTAJЕ IZVORNI PETI PREDLOG. Nema nasumicne zamene.
+- AUDIO RITAM oznaka se pojavljuje samo za audio rezultat. Njegov broj
+  je mera slicnosti 0–100, nije procenat pouzdanosti.
+- Duple kopije i verzije sa istim normalizovanim izvodjacem i osnovnim
+  naslovom ne zauzimaju vise mesta. Isto vazi za identifikovane pesme
+  pustene u aktivnom dogadjaju. Nepovezani/razliciti tagovi mogu spreciti
+  prepoznavanje kopija; ne koriste se grube fuzzy pretpostavke.
+- Osvezavanje iste trenutne pesme ostaje stabilno; predlozi se ne rotiraju
+  nasumicno. Kriterijum slicnog ritma nije garancija identicne muzike.
+
+STA AUDIO SKEN RADI
+- Dekodira celu pesmu u mono signal 11025 Hz.
+- Meri promene energije/udare u bas, srednjem i visokom opsegu.
+- Poredi cetvorobitne ritmicke obrasce, poravnate po fazi, kroz vise
+  24-sekundnih delova; procenjuje tempo iz samog zvuka.
+- Zahteva veoma visoku slicnost (0.97), dovoljno periodicnosti i stabilnosti.
+- Promenljiv tempo, slabi ritmicki signal i velike razlike tempa se odbacuju.
+- Ovo je konzervativan DSP prototip, ne neuronski model istreniran na
+  tvojoj biblioteci. Prag jos nije kalibrisan slusanjem tvojih audio fajlova.
+  Vokali, live bubnjevi, prelazi, swing, promena aranzmana i polovina/dupli
+  tempo mogu dati propusten ili pogresan rezultat. Uvek preslusaj prelaz.
+- Rezultat se cuva u tabeli audio_rhythm u istoj lokalnoj library.db bazi.
+  Nova verzija analizatora, promenjena putanja, velicina ili datum izmene
+  zahtevaju novi sken. Neizmenjeni fajlovi se preskacu.
+- Svaki zavrseni fajl se odmah cuva. Ako zatvoris aplikaciju, sledeci
+  sken nastavlja preko preostalih fajlova. Ne zatvaraj je ako zelis da
+  trenutni fajl zavrsi. Sken koristi CPU/disk; pokreni ga pre nastupa.
+- Privremeni mono audio ide u sistemski temp i uklanja se nakon pesme;
+  potrebnog prostora je oko 44 KB po sekundi trajanja jedne pesme.
+- Audio se ne salje na internet. Originalni muzicki fajlovi se ne menjaju.
+
+FLEKSIBILNI GRIDOVI
+- Nova kartica je odmah pored audio/duplikata.
+- 'Proveri gridove iz collection.nml' cita privremenu kopiju Traktor kolekcije.
+- Vise GRID markera i vise razlicitih eksplicitnih GRID BPM vrednosti
+  prikazuju se odvojeno. Vise markera samo po sebi ne dokazuje promenljiv BPM.
+- Audio sumnja na promenljiv tempo prikazuje se odvojeno posle audio skena;
+  detektor moze zameniti polovinu/dvostruki tempo, zato je ovo sumnja.
+- Nista ne popravlja/menja Traktor beatgridove automatski.
+
+PROVERENO U OVOM PAKETU
+- Sintaksa Python modula i JavaScript-a.
+- Sinteticki isti obrazac razlicite glasnoce prolazi; razlicit obrazac na
+  istom BPM-u ne prolazi. Tisina, velika razlika tempa i promenljiv tempo
+  ne daju audio rezultat.
+- Stvarno WAV dekodiranje preko FFmpeg-a, cache reuse, invalidacija posle
+  promene fajla, iskljucivanje vec izabranog kandidata i odbijanje loseg matcha.
+- Uvoz dostavljene kolekcije: 3804 pesme / 49 plejlista. Bez audio skena
+  obe Rasputin verzije daju iste ID-eve predloga kao prethodni original.
+- NML provera: 48 pesama sa vise grid markera, bez tvrdnje da sve imaju
+  promenljiv tempo.
+- Windows prozor/pakovanje EXE i tvoja stvarna audio kolekcija nisu mogli
+  biti izvrsno provereni ovde. Ovo je izvorni paket za pokretanje preko CMD.
+
+DODATNA PREPORUKA ZA SLEDECU IZMENU
+Dugme za kratko preslusavanje ritmickog segmenta i detaljan prikaz
+'zasto je predlozena'. To bi pomoglo da zajedno kalibrisemo audio prag,
+bez menjanja originalnih preporuka ili nasumicnog forsiranja petog mesta.

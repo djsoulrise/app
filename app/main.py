@@ -1,0 +1,812 @@
+import json
+import os
+import socket
+import subprocess
+import sys
+import threading
+import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+from io import BytesIO
+
+import qrcode
+from fastapi import Body, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+
+from . import audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
+from .config import DATA, SETTINGS
+from .keys import key_score
+from .names import norm
+from .suggest import bpm_score
+
+STATIC = os.path.join(os.path.dirname(__file__), "static")
+JOB = {"running": False, "phase": "", "done": 0, "total": 0, "msg": "", "error": None, "result": None}
+PUBLIC_PREFIXES = ("/g", "/api/guest/", "/static/guest", "/login")
+
+
+def lan_ip() -> str:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("10.255.255.255", 1))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except OSError:
+        return "127.0.0.1"
+
+
+def guest_url() -> str:
+    return f"http://{lan_ip()}:{SETTINGS['port']}/g"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init()
+    if not db.one("SELECT 1 FROM events WHERE active=1"):
+        db.conn().execute("INSERT INTO events(name, date, active) VALUES(?,?,1)",
+                          (f"Vece {datetime.now():%d.%m.%Y}", datetime.now().date().isoformat()))
+        db.conn().commit()
+    nowplaying.start()
+    print(f"\n  DJ asistent: http://127.0.0.1:{SETTINGS['port']}   |  tablet PIN: {SETTINGS['dj_pin']}"
+          f"  (http://{lan_ip()}:{SETTINGS['port']}/login?pin=...)\n  Gosti: {guest_url()}\n")
+    yield
+
+
+app = FastAPI(title="DJ asistent", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def access_control(request: Request, call_next):
+    path = request.url.path
+    host = request.client.host if request.client else ""
+    if host in ("127.0.0.1", "::1", "localhost") or path.startswith(PUBLIC_PREFIXES) \
+            or request.cookies.get("dj") == SETTINGS["dj_pin"]:
+        return await call_next(request)
+    return JSONResponse({"error": "Pristup samo sa DJ racunara ili uz PIN (/login?pin=...)."}, status_code=403)
+
+
+def _local(request: Request) -> bool:
+    return (request.client.host if request.client else "") in ("127.0.0.1", "::1")
+
+
+@app.get("/login")
+def login(pin: str = ""):
+    if pin != SETTINGS["dj_pin"]:
+        raise HTTPException(403, "Pogresan PIN")
+    r = RedirectResponse("/")
+    r.set_cookie("dj", pin, httponly=True, samesite="lax", max_age=86400 * 30)
+    return r
+
+
+@app.get("/")
+def index():
+    return FileResponse(os.path.join(STATIC, "index.html"))
+
+
+@app.get("/g")
+def guest_page():
+    return FileResponse(os.path.join(STATIC, "guest.html"))
+
+
+# ---------- jobs ----------
+
+def _progress(done, total, msg):
+    JOB.update(done=done, total=total, phase=msg)
+
+
+def start_job(name: str, fn) -> dict:
+    if JOB["running"]:
+        raise HTTPException(409, "Posao je vec u toku.")
+    JOB.update(running=True, phase=name, done=0, total=0, error=None, result=None)
+
+    def run():
+        try:
+            JOB["result"] = fn()
+        except Exception as e:
+            JOB["error"] = str(e)
+        finally:
+            JOB["running"] = False
+    threading.Thread(target=run, daemon=True).start()
+    return {"started": True}
+
+
+@app.post("/api/scan")
+def scan():
+    return start_job("Skeniranje", lambda: library.scan_folders(_progress))
+
+
+@app.post("/api/import-nml")
+def import_nml():
+    return start_job("Traktor kolekcija", lambda: library.import_nml(_progress))
+
+
+@app.post("/api/refresh")
+def refresh():
+    def both():
+        r = {}
+        if SETTINGS["nml_path"]:
+            r["nml"] = library.import_nml(_progress)
+        if SETTINGS["music_folders"]:
+            r["scan"] = library.scan_folders(_progress)
+        return r
+    return start_job("Osvezavanje", both)
+
+
+@app.get("/api/status")
+def status():
+    c = db.one("SELECT COUNT(*) n, SUM(on_disk) disk, SUM(in_traktor) trk, SUM(flex_grid) flex FROM tracks")
+    cur = nowplaying.STATE
+    return {"job": JOB, "counts": c, "now": cur, "broadcast": nowplaying.BROADCAST, "history": nowplaying.HISTORY,
+            "ai": ai.available(), "fpcalc": duplicates._fpcalc() is not None, "guest_url": guest_url(),
+            "event": db.one("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1")}
+
+
+# ---------- settings ----------
+
+SETTING_KEYS = ["music_folders", "nml_path", "history_dir", "dupes_dir", "export_dir", "main_folder_hint", "port",
+                "broadcast_enabled", "broadcast_port", "model", "weights", "mode", "style_strictness", "guest_limit", "tip_text",
+                "tip_ips_payload", "audience"]
+
+
+@app.get("/api/settings")
+def get_settings(request: Request):
+    s = {k: SETTINGS[k] for k in SETTING_KEYS}
+    s["anthropic_key_set"] = bool(SETTINGS["anthropic_key"])
+    s["dj_pin"] = SETTINGS["dj_pin"] if _local(request) else ""
+    return s
+
+
+@app.post("/api/settings")
+def set_settings(body: dict = Body(...)):
+    for k in SETTING_KEYS:
+        if k in body:
+            SETTINGS[k] = body[k]
+    if body.get("anthropic_key"):
+        SETTINGS["anthropic_key"] = body["anthropic_key"].strip()
+    if body.get("clear_key"):
+        SETTINGS["anthropic_key"] = ""
+    config.save(SETTINGS)
+    return {"ok": True}
+
+
+# ---------- library ----------
+
+@app.get("/api/tracks")
+def tracks(request: Request):
+    return library.query_tracks(dict(request.query_params))
+
+
+@app.get("/api/search")
+def search(q: str):
+    return library.query_tracks({"q": q, "size": 15, "sort": "artist"})["items"]
+
+
+@app.get("/api/track/{tid}")
+def track(tid: int):
+    t = library.get_track(tid)
+    if not t:
+        raise HTTPException(404)
+    return t
+
+
+@app.post("/api/track/{tid}")
+def edit_track(tid: int, body: dict = Body(...)):
+    c = db.conn()
+    if "tags" in body:
+        c.execute("DELETE FROM track_tags WHERE track_id=?", (tid,))
+        for t in body["tags"]:
+            if t.strip():
+                c.execute("INSERT OR IGNORE INTO track_tags VALUES(?,?)", (tid, library.ensure_tag(c, t)))
+    if "energy" in body:
+        e = body["energy"]
+        if e in (None, ""):
+            c.execute("UPDATE tracks SET energy_src=NULL WHERE id=?", (tid,))
+        else:
+            c.execute("UPDATE tracks SET energy=?, energy_src='ručno' WHERE id=?", (max(1, min(10, int(e))), tid))
+    if "style" in body:
+        c.execute("UPDATE tracks SET style_override=? WHERE id=?", (body["style"] or None, tid))
+    c.commit()
+    library.recompute_energy()
+    return library.get_track(tid)
+
+
+@app.post("/api/tracks/tag")
+def bulk_tag(body: dict = Body(...)):
+    library.set_tags(body.get("ids", []), body.get("add", []), body.get("remove", []))
+    return {"ok": True}
+
+
+@app.post("/api/reveal/{tid}")
+def reveal(tid: int, request: Request):
+    t = db.one("SELECT path FROM tracks WHERE id=?", (tid,))
+    if not t or not _local(request) or sys.platform != "win32":
+        raise HTTPException(400, "Moguce samo sa DJ racunara na Windowsu.")
+    subprocess.Popen(["explorer", f"/select,{os.path.normpath(t['path'])}"])
+    return {"ok": True}
+
+
+@app.get("/api/file/{tid}")
+def file(tid: int, request: Request):
+    t = db.one("SELECT path FROM tracks WHERE id=?", (tid,))
+    if not t or not _local(request) or not os.path.isfile(t["path"]):
+        raise HTTPException(404)
+    return FileResponse(t["path"])
+
+
+# ---------- tags ----------
+
+@app.get("/api/tags")
+def tags():
+    return db.rows("SELECT d.name, d.display, d.junk, d.ignored, COUNT(t.track_id) n FROM tag_defs d "
+                   "LEFT JOIN track_tags t ON t.tag=d.name GROUP BY d.name ORDER BY n DESC")
+
+
+@app.post("/api/tags/rename")
+def rename_tag(body: dict = Body(...)):
+    old, new_disp = library.norm_tag(body["name"]), body["new"].strip()
+    new = library.norm_tag(new_disp)
+    if not new:
+        raise HTTPException(400, "Prazan naziv")
+    c = db.conn()
+    if new == old:
+        c.execute("UPDATE tag_defs SET display=? WHERE name=?", (new_disp, old))
+    else:
+        library.ensure_tag(c, new_disp)
+        c.execute("UPDATE OR IGNORE track_tags SET tag=? WHERE tag=?", (new, old))
+        c.execute("DELETE FROM track_tags WHERE tag=?", (old,))
+        c.execute("DELETE FROM tag_defs WHERE name=?", (old,))
+    c.commit()
+    return {"ok": True}
+
+
+@app.post("/api/tags/flag")
+def flag_tags(body: dict = Body(...)):
+    c = db.conn()
+    for n in body.get("names", []):
+        if "junk" in body:
+            c.execute("UPDATE tag_defs SET junk=? WHERE name=?", (int(body["junk"]), n))
+        if "ignored" in body:
+            c.execute("UPDATE tag_defs SET ignored=? WHERE name=?", (int(body["ignored"]), n))
+    c.commit()
+    library.recompute_energy()
+    return {"ok": True}
+
+
+@app.post("/api/tags/delete")
+def delete_tag(body: dict = Body(...)):
+    c = db.conn()
+    c.execute("DELETE FROM track_tags WHERE tag=?", (body["name"],))
+    c.execute("DELETE FROM tag_defs WHERE name=?", (body["name"],))
+    c.commit()
+    return {"ok": True}
+
+
+@app.post("/api/ai/tag-suggest")
+def ai_tag_suggest():
+    try:
+        return {"added": ai.suggest_tags()}
+    except ai.AIError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/tag-suggestions")
+def tag_suggestions():
+    rows = db.rows("SELECT s.track_id, s.tag, t.artist, t.title, d.display FROM tag_suggestions s "
+                   "JOIN tracks t ON t.id=s.track_id JOIN tag_defs d ON d.name=s.tag ORDER BY t.artist")
+    return rows
+
+
+@app.post("/api/tag-suggestions/apply")
+def apply_suggestions(body: dict = Body(...)):
+    c = db.conn()
+    for it in body.get("items", []):
+        if body.get("accept", True):
+            c.execute("INSERT OR IGNORE INTO track_tags VALUES(?,?)", (it["track_id"], it["tag"]))
+        c.execute("DELETE FROM tag_suggestions WHERE track_id=? AND tag=?", (it["track_id"], it["tag"]))
+    c.commit()
+    library.recompute_energy()
+    return {"ok": True}
+
+
+# ---------- duplicates ----------
+
+@app.get("/api/dupes")
+def dupes():
+    return duplicates.find_duplicates()
+
+
+@app.post("/api/dupes/move")
+def dupes_move(body: dict = Body(...)):
+    if not body.get("confirm"):
+        raise HTTPException(400, "Potrebna je potvrda.")
+    try:
+        return duplicates.move_to_dupes(body.get("ids", []))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+# ---------- now playing & suggestions ----------
+
+@app.get("/api/now")
+def now():
+    cur = nowplaying.STATE
+    return {**cur, "track": library.get_track(cur["track_id"]) if cur["track_id"] else None}
+
+
+@app.post("/api/now")
+def set_now(body: dict = Body(...)):
+    if not db.one("SELECT 1 FROM tracks WHERE id=?", (body["track_id"],)):
+        raise HTTPException(404)
+    nowplaying.set_current(body["track_id"], "rucno")
+    return {"ok": True}
+
+
+@app.get("/api/styles")
+def style_list():
+    return styles.LABELS
+
+
+@app.get("/api/suggest")
+def get_suggest(track_id: int, mode: str | None = None, strict: str | None = None):
+    return suggest.suggest(track_id, mode, strict=strict)
+
+
+@app.get("/api/plays")
+def plays(event_id: int | None = None):
+    ev = event_id or suggest.active_event_id()
+    rows = db.rows("SELECT p.id, p.track_id, p.ts, p.source, p.rating, t.artist, t.title, t.bpm, t.camelot, t.energy "
+                   "FROM plays p JOIN tracks t ON t.id=p.track_id WHERE p.event_id=? ORDER BY p.id", (ev,))
+    return rows
+
+
+@app.post("/api/plays/{pid}/rate")
+def rate_play(pid: int, body: dict = Body(...)):
+    db.conn().execute("UPDATE plays SET rating=? WHERE id=?", (int(body["rating"]), pid))
+    db.conn().commit()
+    return {"ok": True}
+
+
+@app.delete("/api/plays/{pid}")
+def delete_play(pid: int):
+    db.conn().execute("DELETE FROM plays WHERE id=?", (pid,))
+    db.conn().commit()
+    return {"ok": True}
+
+
+@app.post("/api/notes")
+def save_note(body: dict = Body(...)):
+    c = db.conn()
+    if body.get("note", "").strip():
+        c.execute("INSERT OR REPLACE INTO notes VALUES(?,?,?)", (body["a"], body["b"], body["note"].strip()))
+    else:
+        c.execute("DELETE FROM notes WHERE a=? AND b=?", (body["a"], body["b"]))
+    c.commit()
+    return {"ok": True}
+
+
+@app.post("/api/learning/rebuild")
+def rebuild():
+    library.rebuild_learning()
+    library.recompute_energy()
+    return {"ok": True}
+
+
+@app.get("/api/src-playlists")
+def src_playlists():
+    return db.rows("SELECT * FROM src_playlists ORDER BY source, name")
+
+
+@app.post("/api/src-playlists/{pid}")
+def src_playlist_toggle(pid: int, body: dict = Body(...)):
+    db.conn().execute("UPDATE src_playlists SET use_learn=? WHERE id=?", (int(body["use"]), pid))
+    db.conn().commit()
+    library.rebuild_learning()
+    return {"ok": True}
+
+
+# ---------- app playlists ----------
+
+@app.get("/api/playlists")
+def list_playlists():
+    return playlists.BUILTIN + db.rows("SELECT * FROM app_playlists ORDER BY name")
+
+
+def _get_playlist(pid: int) -> dict:
+    if pid == 0:
+        return playlists.BUILTIN[0]
+    pl = db.one("SELECT * FROM app_playlists WHERE id=?", (pid,))
+    if not pl:
+        raise HTTPException(404)
+    return pl
+
+
+@app.post("/api/playlists")
+def save_playlist(body: dict = Body(...)):
+    c = db.conn()
+    rules = json.dumps(body.get("rules") or {})
+    ids = json.dumps(body.get("track_ids") or [])
+    if body.get("id"):
+        c.execute("UPDATE app_playlists SET name=?, kind=?, rules=?, track_ids=? WHERE id=?",
+                  (body["name"], body["kind"], rules, ids, body["id"]))
+        pid = body["id"]
+    else:
+        pid = c.execute("INSERT INTO app_playlists(name, kind, rules, track_ids) VALUES(?,?,?,?)",
+                        (body["name"], body["kind"], rules, ids)).lastrowid
+    c.commit()
+    return {"id": pid}
+
+
+@app.delete("/api/playlists/{pid}")
+def delete_playlist(pid: int):
+    db.conn().execute("DELETE FROM app_playlists WHERE id=?", (pid,))
+    db.conn().commit()
+    return {"ok": True}
+
+
+@app.get("/api/playlists/{pid}/tracks")
+def playlist_tracks(pid: int):
+    return playlists.playlist_tracks(_get_playlist(pid))
+
+
+@app.post("/api/playlists/{pid}/export")
+def export_playlist(pid: int):
+    pl = _get_playlist(pid)
+    try:
+        return {"path": playlists.export_m3u(pl["name"], playlists.playlist_tracks(pl))}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/playlists/preview")
+def preview_rules(body: dict = Body(...)):
+    return playlists.rule_tracks(body)[:200]
+
+
+# ---------- AI situation ----------
+
+@app.post("/api/ai/situation")
+def ai_situation(body: dict = Body(...)):
+    try:
+        return ai.situation(body["text"], int(body.get("count") or 15))
+    except ai.AIError as e:
+        raise HTTPException(400, str(e))
+
+
+# ---------- trends ----------
+
+@app.get("/api/trends/sources")
+def trend_sources():
+    return db.rows("SELECT * FROM trend_sources ORDER BY id")
+
+
+@app.post("/api/trends/sources")
+def add_trend_source(body: dict = Body(...)):
+    url = (body.get("url") or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(400, "URL mora poceti sa http:// ili https://")
+    db.conn().execute("INSERT INTO trend_sources(name, url, kind) VALUES(?,?,?)",
+                      (body.get("name") or url, url, body.get("kind", "rss")))
+    db.conn().commit()
+    return {"ok": True}
+
+
+@app.delete("/api/trends/sources/{sid}")
+def del_trend_source(sid: int):
+    db.conn().execute("DELETE FROM trend_items WHERE source_id=?", (sid,))
+    db.conn().execute("DELETE FROM trend_sources WHERE id=?", (sid,))
+    db.conn().commit()
+    return {"ok": True}
+
+
+@app.post("/api/trends/fetch/{sid}")
+def trend_fetch(sid: int):
+    src = db.one("SELECT * FROM trend_sources WHERE id=?", (sid,))
+    if not src:
+        raise HTTPException(404)
+    try:
+        return {"added": trends.fetch_source(src)}
+    except Exception as e:
+        raise HTTPException(400, f"Preuzimanje nije uspelo: {e}")
+
+
+@app.post("/api/trends/items")
+def add_trend_item(body: dict = Body(...)):
+    song = (body.get("song") or "").strip()
+    if not song:
+        raise HTTPException(400, "Upisi izvodjaca i naslov.")
+    artist, _, title = song.partition(" - ")
+    link = (body.get("link") or "").strip()
+    if link and not link.startswith(("http://", "https://")):
+        raise HTTPException(400, "Link mora poceti sa http:// ili https://")
+    db.conn().execute("INSERT INTO trend_items(source_id, title, artist, song, link, track_id, fetched) VALUES(0,?,?,?,?,?,?)",
+                      (title or artist, artist if title else "", song, link, nowplaying.match_song(song),
+                       datetime.now().isoformat(timespec="seconds")))
+    db.conn().commit()
+    return {"ok": True}
+
+
+@app.get("/api/trends/items")
+def trend_items():
+    items = db.rows("SELECT * FROM trend_items ORDER BY COALESCE(fit, -1) DESC, id DESC LIMIT 300")
+    for i in items:
+        i["track"] = library.get_track(i["track_id"]) if i["track_id"] else None
+        if not i["track"] and i["artist"]:
+            i["similar"] = db.rows("SELECT * FROM tracks WHERE LOWER(artist)=? ORDER BY playcount DESC LIMIT 3", (i["artist"].lower(),))
+    return items
+
+
+@app.delete("/api/trends/items/{iid}")
+def del_trend_item(iid: int):
+    db.conn().execute("DELETE FROM trend_items WHERE id=?", (iid,))
+    db.conn().commit()
+    return {"ok": True}
+
+
+# ---------- events ----------
+
+@app.get("/api/events")
+def events():
+    evs = db.rows("SELECT * FROM events ORDER BY id DESC")
+    for e in evs:
+        e["parts"] = db.rows("SELECT * FROM event_parts WHERE event_id=? ORDER BY pos", (e["id"],))
+        e["plays"] = db.one("SELECT COUNT(*) n FROM plays WHERE event_id=?", (e["id"],))["n"]
+    return evs
+
+
+@app.post("/api/events")
+def create_event(body: dict = Body(...)):
+    c = db.conn()
+    eid = c.execute("INSERT INTO events(name, date, venue) VALUES(?,?,?)",
+                    (body["name"], body.get("date") or datetime.now().date().isoformat(), body.get("venue", ""))).lastrowid
+    c.commit()
+    return {"id": eid}
+
+
+@app.post("/api/events/{eid}/activate")
+def activate_event(eid: int):
+    c = db.conn()
+    c.execute("UPDATE events SET active=0")
+    c.execute("UPDATE events SET active=1 WHERE id=?", (eid,))
+    c.commit()
+    return {"ok": True}
+
+
+@app.post("/api/events/{eid}/requests-open")
+def requests_open(eid: int, body: dict = Body(...)):
+    db.conn().execute("UPDATE events SET requests_open=? WHERE id=?", (int(body["open"]), eid))
+    db.conn().commit()
+    return {"ok": True}
+
+
+@app.post("/api/events/{eid}/parts")
+def set_parts(eid: int, body: dict = Body(...)):
+    c = db.conn()
+    c.execute("DELETE FROM event_parts WHERE event_id=?", (eid,))
+    for i, p in enumerate(body.get("parts", [])):
+        c.execute("INSERT INTO event_parts(event_id, pos, name, energy, minutes) VALUES(?,?,?,?,?)",
+                  (eid, i, p["name"], int(p.get("energy") or 5), int(p.get("minutes") or 30)))
+    c.commit()
+    return {"ok": True}
+
+
+@app.get("/api/events/{eid}/part-suggest/{pos}")
+def part_suggest(eid: int, pos: int):
+    parts = db.rows("SELECT * FROM event_parts WHERE event_id=? ORDER BY pos", (eid,))
+    if pos >= len(parts):
+        raise HTTPException(404)
+    part = parts[pos]
+    frac = pos / max(1, len(parts) - 1)
+    played = {r["track_id"] for r in db.rows("SELECT track_id FROM plays WHERE event_id=?", (eid,))}
+    ban = suggest.banned(eid)
+    rows = [t for t in db.rows("SELECT * FROM tracks WHERE energy IS NOT NULL") if t["id"] not in played and not suggest.is_banned(t, ban)]
+    rows.sort(key=lambda t: abs(t["energy"] - part["energy"]) + 3 * abs((t["avg_pos"] if t["avg_pos"] is not None else frac) - frac)
+              - 0.05 * min(t["playcount"] or 0, 20))
+    out = rows[:10]
+    library.attach_tags(out)
+    return {"part": part, "items": out}
+
+
+@app.get("/api/bans")
+def get_bans(event_id: int | None = None):
+    return db.rows("SELECT * FROM bans WHERE event_id=?", (event_id or suggest.active_event_id(),))
+
+
+@app.post("/api/bans")
+def add_ban(body: dict = Body(...)):
+    ev = body.get("event_id") or suggest.active_event_id()
+    db.conn().execute("INSERT INTO bans(event_id, kind, value) VALUES(?,?,?)", (ev, body["kind"], str(body["value"])))
+    db.conn().commit()
+    return {"ok": True}
+
+
+@app.delete("/api/bans/{bid}")
+def del_ban(bid: int):
+    db.conn().execute("DELETE FROM bans WHERE id=?", (bid,))
+    db.conn().commit()
+    return {"ok": True}
+
+
+# ---------- requests (DJ side) ----------
+
+@app.get("/api/requests")
+def dj_requests():
+    ev = suggest.active_event_id()
+    cur = db.one("SELECT * FROM tracks WHERE id=?", (nowplaying.STATE["track_id"],)) if nowplaying.STATE["track_id"] else None
+    played = {r["track_id"] for r in db.rows("SELECT track_id FROM plays WHERE event_id=?", (ev,))}
+    ban = suggest.banned(ev)
+    out = []
+    for r in db.rows("SELECT * FROM requests WHERE event_id=? ORDER BY votes DESC, id", (ev,)):
+        t = db.one("SELECT * FROM tracks WHERE id=?", (r["track_id"],)) if r["track_id"] else None
+        if not t and r["free_text"]:
+            tid = nowplaying.match_song(r["free_text"])
+            t = db.one("SELECT * FROM tracks WHERE id=?", (tid,)) if tid else None
+        r["in_library"] = bool(t)
+        r["played"] = bool(t and t["id"] in played)
+        r["banned"] = bool(t and suggest.is_banned(t, ban))
+        if t:
+            library.attach_tags([t])
+        r["track"] = t
+        if t and cur:
+            r["fit"] = {"bpm": round(bpm_score(cur["bpm"], t["bpm"])[0], 2), "key": key_score(cur["camelot"], t["camelot"])}
+        out.append(r)
+    return out
+
+
+@app.post("/api/requests/{rid}")
+def update_request(rid: int, body: dict = Body(...)):
+    db.conn().execute("UPDATE requests SET status=? WHERE id=?", (body["status"], rid))
+    db.conn().commit()
+    return {"ok": True}
+
+
+@app.post("/api/requests/{rid}/tip")
+def mark_tip(rid: int, body: dict = Body(...)):
+    db.conn().execute("UPDATE requests SET tip=? WHERE id=?", (body.get("tip"), rid))
+    db.conn().commit()
+    return {"ok": True}
+
+
+@app.post("/api/tip-image")
+async def upload_tip_image(request: Request):
+    data = await request.body()
+    ctype = request.headers.get("content-type", "")
+    ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(ctype)
+    if not ext or len(data) > 3_000_000:
+        raise HTTPException(400, "Dozvoljeni su PNG/JPG/WEBP do 3 MB.")
+    name = f"tip.{ext}"
+    (DATA / "uploads" / name).write_bytes(data)
+    SETTINGS["tip_image"] = name
+    config.save(SETTINGS)
+    return {"ok": True}
+
+
+@app.get("/api/qr")
+def qr(kind: str = "guest"):
+    data = guest_url() if kind == "guest" else SETTINGS["tip_ips_payload"]
+    if not data:
+        raise HTTPException(404)
+    return _qr_png(data)
+
+
+def _qr_png(data: str) -> Response:
+    buf = BytesIO()
+    qrcode.make(data, box_size=8, border=2).save(buf, format="PNG")
+    return Response(buf.getvalue(), media_type="image/png")
+
+
+# ---------- guest side (public) ----------
+
+def _guest_key(request: Request) -> str:
+    return request.cookies.get("gk") or (request.client.host if request.client else "x")
+
+
+@app.get("/api/guest/info")
+def guest_info(request: Request):
+    ev = db.one("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1")
+    resp = JSONResponse({
+        "event": ev["name"] if ev else "", "open": bool(ev and ev["requests_open"]),
+        "tip_text": SETTINGS["tip_text"], "tip_qr": bool(SETTINGS["tip_ips_payload"]),
+        "tip_image": f"/api/guest/tip-image" if SETTINGS["tip_image"] else "",
+        "limit": SETTINGS["guest_limit"]})
+    if "gk" not in request.cookies:
+        resp.set_cookie("gk", uuid.uuid4().hex, max_age=86400 * 3, httponly=True, samesite="lax")
+    return resp
+
+
+@app.get("/api/guest/tip-image")
+def guest_tip_image():
+    p = DATA / "uploads" / (SETTINGS["tip_image"] or "none")
+    if not SETTINGS["tip_image"] or not p.is_file():
+        raise HTTPException(404)
+    return FileResponse(p)
+
+
+@app.get("/api/guest/tip-qr.png")
+def guest_tip_qr():
+    if not SETTINGS["tip_ips_payload"]:
+        raise HTTPException(404)
+    return _qr_png(SETTINGS["tip_ips_payload"])
+
+
+@app.get("/api/guest/search")
+def guest_search(q: str):
+    if len(q.strip()) < 2:
+        return []
+    ban = suggest.banned(suggest.active_event_id())
+    items = library.query_tracks({"q": q, "size": 40})["items"]
+    return [{"id": t["id"], "artist": t["artist"], "title": t["title"]} for t in items if not suggest.is_banned(t, ban)][:15]
+
+
+@app.get("/api/guest/list")
+def guest_list():
+    ev = suggest.active_event_id()
+    rows = db.rows("SELECT r.id, r.votes, r.free_text, r.status, t.artist, t.title FROM requests r "
+                   "LEFT JOIN tracks t ON t.id=r.track_id WHERE r.event_id=? AND r.status IN ('novo','prihvaceno','odlozeno') "
+                   "ORDER BY r.votes DESC, r.id LIMIT 30", (ev,))
+    return [{"id": r["id"], "votes": r["votes"], "status": r["status"],
+             "song": f"{r['artist']} - {r['title']}" if r["title"] else r["free_text"]} for r in rows]
+
+
+@app.post("/api/guest/request")
+def guest_request(request: Request, body: dict = Body(...)):
+    ev = db.one("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1")
+    if not ev or not ev["requests_open"]:
+        raise HTTPException(403, "Zahtevi trenutno nisu otvoreni.")
+    gk = _guest_key(request)
+    lim = SETTINGS["guest_limit"]
+    since = (datetime.now() - timedelta(minutes=int(lim["minutes"]))).isoformat(timespec="seconds")
+    n = db.one("SELECT COUNT(*) n FROM requests WHERE event_id=? AND guest_key=? AND created>=?", (ev["id"], gk, since))["n"]
+    if n >= int(lim["count"]):
+        raise HTTPException(429, f"Moze najvise {lim['count']} zahteva na {lim['minutes']} min. Probaj malo kasnije.")
+    tid = body.get("track_id")
+    free = (body.get("free_text") or "").strip()[:150]
+    t = db.one("SELECT * FROM tracks WHERE id=?", (tid,)) if tid else None
+    if not t and not free:
+        raise HTTPException(400, "Izaberi pesmu ili upisi naziv.")
+    status = "novo"
+    if t and suggest.is_banned(t, suggest.banned(ev["id"])):
+        status = "odbijeno"
+    c = db.conn()
+    rid = c.execute("INSERT INTO requests(event_id, track_id, free_text, guest, message, guest_key, status, created) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (ev["id"], t["id"] if t else None, free if not t else "", (body.get("name") or "")[:40],
+                     (body.get("message") or "")[:200], gk, status, datetime.now().isoformat(timespec="seconds"))).lastrowid
+    c.execute("INSERT OR IGNORE INTO votes VALUES(?,?)", (rid, gk))
+    c.commit()
+    if status == "odbijeno":
+        return {"ok": True, "msg": "Hvala! Ovu pesmu veceras nece biti na listi, probaj neku drugu."}
+    return {"ok": True, "msg": "Zahtev je poslat. Hvala!"}
+
+
+@app.post("/api/guest/vote/{rid}")
+def guest_vote(rid: int, request: Request):
+    gk = _guest_key(request)
+    c = db.conn()
+    if c.execute("INSERT OR IGNORE INTO votes VALUES(?,?)", (rid, gk)).rowcount:
+        c.execute("UPDATE requests SET votes=votes+1 WHERE id=?", (rid,))
+    c.commit()
+    return {"ok": True}
+
+
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.get("/api/audio/status")
+def audio_status():
+    return audio_rhythm.status()
+
+
+@app.post("/api/audio/scan")
+def audio_scan():
+    return start_job("Audio deep scan", lambda: audio_rhythm.scan(_progress))
+
+
+@app.post("/api/grids/scan")
+def grids_scan():
+    return start_job("Traktor gridovi", lambda: grid_scan.scan(_progress))
+
+
+@app.get("/api/grids")
+def grids_list():
+    return grid_scan.results()
