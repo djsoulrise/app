@@ -33,7 +33,7 @@ def resolve_track_path(track_id):
         candidates.append(os.path.normpath(urllib.parse.unquote(raw)))
     for path in candidates:
         if path and os.path.isfile(path):
-            return os.path.abspath(path)
+            return os.path.realpath(path)
     # Repair only an unambiguous exact filename within configured music roots.
     # Never pick a fuzzy artist/title match or an arbitrary duplicate.
     name = ntpath.basename(raw).casefold()
@@ -44,7 +44,7 @@ def resolve_track_path(track_id):
         for folder, _, files in os.walk(root):
             for filename in files:
                 if filename.casefold() == name:
-                    found.add(os.path.abspath(os.path.join(folder, filename)))
+                    found.add(os.path.realpath(os.path.join(folder, filename)))
                     if len(found) > 1:
                         raise FileNotFoundError('Putanja nije dostupna, a postoji vise fajlova istog naziva. Osvezi kolekciju da bi izabrao tacan fajl: ' + raw)
     if len(found) == 1:
