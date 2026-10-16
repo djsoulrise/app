@@ -8,7 +8,9 @@ import tempfile
 from pathlib import Path
 
 from . import db
+from .scan_control import ScanCancelled, check_stop
 
+SCAN_REVISION = 0
 VERSION = 1
 MIN_SIMILARITY = 0.97  # heuristic similarity, never a probability
 
@@ -38,12 +40,13 @@ def init():
     db.conn().commit()
 
 
-def analyze_pcm(samples, sr=11025):
+def analyze_pcm(samples, sr=11025, stop_event=None):
     """Full-track multiband onset envelope, tempo and beat-relative groove.
 
     PCM can be memory mapped. STFT blocks bound RAM even for long tracks.
     Beat phase is aligned by circular correlation at comparison time.
     """
+    check_stop(stop_event)
     import numpy as np
     from scipy.signal import find_peaks
     fft, hop = 1024, 256
@@ -58,6 +61,7 @@ def analyze_pcm(samples, sr=11025):
     prev = np.zeros((fft // 2 + 1,), dtype=np.float32)
     window = np.hanning(fft)
     for start in range(0, frames, 1024):
+        check_stop(stop_event)
         count = min(1024, frames - start)
         chunk = np.asarray(samples[start * hop:(start + count - 1) * hop + fft])
         windows = np.lib.stride_tricks.sliding_window_view(chunk, fft)[::hop]
@@ -74,6 +78,7 @@ def analyze_pcm(samples, sr=11025):
     length = int(hz * 24)
     tempos, strengths, grooves = [], [], []
     for start in range(0, frames - length + 1, length):
+        check_stop(stop_event)
         band = env[start:start + length]
         e = band.sum(axis=1)
         if e.mean() < combined.mean() * .20:
@@ -126,19 +131,37 @@ def analyze_pcm(samples, sr=11025):
                 seconds=round(len(samples)/sr, 1))
 
 
-def analyze_file(path):
+def analyze_file(path, stop_event=None):
     import numpy as np
+    check_stop(stop_event)
     with tempfile.TemporaryDirectory(prefix='dj-rhythm-') as folder:
         pcm = str(Path(folder) / 'mono.f32')
-        result = subprocess.run([decoder(), '-v', 'error', '-nostdin', '-i', path,
-                                 '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '11025',
-                                 '-f', 'f32le', pcm], capture_output=True, timeout=1800,
-                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        if result.returncode or not os.path.isfile(pcm) or not os.path.getsize(pcm):
-            raise ValueError('Audio nije dekodiran: ' + result.stderr.decode(errors='replace')[-200:])
+        command = [decoder(), '-v', 'error', '-nostdin', '-i', path,
+                   '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '11025', '-f', 'f32le', pcm]
+        import time
+        deadline = time.monotonic() + 1800
+        with subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)) as process:
+            try:
+                while True:
+                    check_stop(stop_event)
+                    if time.monotonic() > deadline:
+                        raise TimeoutError('Audio dekodiranje je predugo trajalo.')
+                    try:
+                        _, error = process.communicate(timeout=.25)
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+            except BaseException:
+                process.kill()
+                process.communicate()
+                raise
+            if process.returncode or not os.path.isfile(pcm) or not os.path.getsize(pcm):
+                raise ValueError('Audio nije dekodiran: ' + error.decode(errors='replace')[-200:])
+        check_stop(stop_event)
         audio = np.memmap(pcm, dtype='<f4', mode='r')
         try:
-            return analyze_pcm(audio)
+            return analyze_pcm(audio, stop_event=stop_event)
         finally:
             del audio
 
@@ -153,12 +176,16 @@ def valid(row, track):
         return False
 
 
-def scan(progress=None):
+def scan(progress=None, stop_event=None):
+    global SCAN_REVISION
+    check_stop(stop_event)
     init()
     decoder()  # actionable error before starting thousands of tracks
     rows = db.rows('SELECT id,path FROM tracks ORDER BY id')
     result = dict(scanned=0, cached=0, missing=0, failed=0)
     for i, t in enumerate(rows):
+        if stop_event is not None and stop_event.is_set():
+            raise ScanCancelled(result)
         if progress:
             progress(i, len(rows), 'Audio deep scan: ' + os.path.basename(t['path'] or ''))
         cached = db.one('SELECT * FROM audio_rhythm WHERE track_id=?', (t['id'],))
@@ -171,9 +198,11 @@ def scan(progress=None):
             result['missing'] += 1
             continue
         try:
-            features = analyze_file(t['path'])
+            features = analyze_file(t['path'], stop_event=stop_event)
             status, error = 'ok', None
             result['scanned'] += 1
+        except ScanCancelled:
+            raise ScanCancelled(result)
         except Exception as exc:
             features, status, error = {}, 'error', str(exc)[:400]
             result['failed'] += 1
@@ -181,6 +210,7 @@ def scan(progress=None):
                           (t['id'], t['path'], stat.st_size, stat.st_mtime_ns, VERSION,
                            status, json.dumps(features), error))
         db.conn().commit()  # resumable after closing app
+        SCAN_REVISION += 1
     if progress:
         progress(len(rows), len(rows), 'Audio skeniranje zavrseno')
     return result
@@ -258,7 +288,7 @@ def rank_audio(current, candidates, excluded=(), cutoff=None):
     report = {'threshold': cutoff, 'current_id': current['id'], 'current':
               {'id': current['id'], 'artist': current.get('artist'), 'title': current.get('title')},
               'current_error': reason, 'current_audio': None, 'pool': len(candidates),
-              'counts': {}, 'compared': 0, 'top': []}
+              'counts': {}, 'compared': 0, 'top': [], 'accepted_top': []}
     if reason:
         return [], report
     features = json.loads(cached[current['id']]['features'])
@@ -286,7 +316,25 @@ def rank_audio(current, candidates, excluded=(), cutoff=None):
     results.sort(key=lambda x: (-x['score'], x['track']['id']))
     report.update(counts=dict(counts), compared=len(results))
     report['top'] = [public_match(r) for r in results[:5]]
+    report['accepted_top'] = unique_accepted(results, 10)
     return results, report
+
+
+def unique_accepted(results, limit):
+    from .names import core_title
+    seen, out = set(), []
+    for result in results:
+        if not result['accepted']:
+            continue
+        t = result['track']
+        identity = core_title(t.get('artist') or '', t.get('title') or '') or str(t['id'])
+        if identity in seen:
+            continue
+        seen.add(identity)
+        out.append(public_match(result))
+        if len(out) >= limit:
+            break
+    return out
 
 
 def public_match(result):
@@ -321,7 +369,7 @@ def matches(track_id, cutoff=None, limit=50):
     results, report = rank_audio(current, candidates, cutoff=cutoff)
     report['accepted_total'] = sum(r['accepted'] for r in results)
     report['items'] = [public_match(r) for r in results[:max(1, min(limit, 100))]]
-    report['accepted_items'] = [public_match(r) for r in results if r['accepted']][:50]
+    report['accepted_items'] = unique_accepted(results, 50)
     report['scope'] = 'Cela audio skenirana biblioteka; bez izvornih stilskih/key/istorijskih filtera. Lista nije automatska preporuka.'
     return report
 

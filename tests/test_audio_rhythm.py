@@ -2,11 +2,15 @@
 import unittest
 import json
 import tempfile
+import threading
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 import numpy as np
 from app.audio_rhythm import analyze_pcm, similarity, comparison, threshold, MIN_SIMILARITY
 from app import config
+from app import audio_rhythm
+from app.scan_control import ScanCancelled
 
 
 def drum_audio(kind='dance', gain=1):
@@ -77,6 +81,29 @@ class RhythmTests(unittest.TestCase):
         original = max(float((a*np.roll(b,s,axis=1)).sum()) for s in range(64))
         measured = comparison({**self.a, 'profile': a.tolist()}, {**self.a, 'profile': b.tolist()})
         self.assertAlmostEqual(measured['groove'], original, places=10)
+
+    def test_audio_analysis_honors_stop(self):
+        stop = threading.Event(); stop.set()
+        with self.assertRaises(ScanCancelled):
+            analyze_pcm(np.zeros(11025*60), stop_event=stop)
+
+    def test_stop_terminates_active_decoder(self):
+        stop = threading.Event()
+        class Decoder:
+            killed = False
+            def __enter__(self): return self
+            def __exit__(self,*args): return False
+            def communicate(self,timeout=None):
+                if timeout is not None:
+                    stop.set()
+                    raise subprocess.TimeoutExpired('decoder',timeout)
+                return None,b''
+            def kill(self): self.killed=True
+        process=Decoder()
+        with patch.object(audio_rhythm,'decoder',return_value='ffmpeg'), patch.object(audio_rhythm.subprocess,'Popen',return_value=process):
+            with self.assertRaises(ScanCancelled):
+                audio_rhythm.analyze_file('unused.mp3',stop)
+        self.assertTrue(process.killed)
 
 
 if __name__ == '__main__':

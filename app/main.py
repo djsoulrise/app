@@ -16,12 +16,15 @@ from fastapi.staticfiles import StaticFiles
 
 from . import native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
 from .config import DATA, SETTINGS
+from .scan_control import ScanCancelled
 from .keys import key_score
 from .names import norm
 from .suggest import bpm_score
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 JOB = {"running": False, "phase": "", "done": 0, "total": 0, "msg": "", "error": None, "result": None}
+JOB_LOCK = threading.Lock()
+JOB_STOP = threading.Event()
 PUBLIC_PREFIXES = ("/g", "/api/guest/", "/static/guest", "/login")
 
 
@@ -95,20 +98,36 @@ def _progress(done, total, msg):
     JOB.update(done=done, total=total, phase=msg)
 
 
-def start_job(name: str, fn) -> dict:
-    if JOB["running"]:
-        raise HTTPException(409, "Posao je vec u toku.")
-    JOB.update(running=True, phase=name, done=0, total=0, error=None, result=None)
-
+def start_job(name: str, fn, kind=None, cancellable=False) -> dict:
+    with JOB_LOCK:
+        if JOB['running']:
+            raise HTTPException(409, 'Posao je vec u toku.')
+        JOB_STOP.clear()
+        JOB.update(running=True, phase=name, done=0, total=0, error=None, result=None,
+                   kind=kind, cancellable=cancellable, stop_requested=False, cancelled=False)
     def run():
         try:
-            JOB["result"] = fn()
-        except Exception as e:
-            JOB["error"] = str(e)
+            JOB['result'] = fn()
+        except ScanCancelled as exc:
+            JOB.update(cancelled=True, result=exc.result, phase='Zaustavljeno — rezultati sacuvani')
+        except Exception as exc:
+            JOB['error'] = str(exc)
         finally:
-            JOB["running"] = False
+            JOB['running'] = False
     threading.Thread(target=run, daemon=True).start()
-    return {"started": True}
+    return {'started': True}
+
+
+@app.post('/api/job/stop')
+def stop_job(body: dict = Body(...)):
+    with JOB_LOCK:
+        if not JOB['running']:
+            return {'stopping': False, 'already_finished': True}
+        if not JOB.get('cancellable') or body.get('kind') != JOB.get('kind'):
+            raise HTTPException(409, 'Ova kontrola ne zaustavlja trenutno aktivan posao.')
+        JOB_STOP.set()
+        JOB['stop_requested'] = True
+    return {'stopping': True}
 
 
 @app.post("/api/scan")
@@ -139,7 +158,8 @@ def status():
     cur = nowplaying.STATE
     return {"job": JOB, "counts": c, "now": cur, "broadcast": nowplaying.BROADCAST, "history": nowplaying.HISTORY,
             "ai": ai.available(), "fpcalc": duplicates._fpcalc() is not None, "guest_url": guest_url(),
-            "event": db.one("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1")}
+            "event": db.one("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1"),
+            "audio_revision": audio_rhythm.SCAN_REVISION, "audio_threshold": audio_rhythm.threshold()}
 
 
 # ---------- settings ----------
@@ -843,12 +863,12 @@ def audio_status():
 
 @app.post("/api/audio/scan")
 def audio_scan():
-    return start_job("Audio deep scan", lambda: audio_rhythm.scan(_progress))
+    return start_job("Audio deep scan", lambda: audio_rhythm.scan(_progress, JOB_STOP), kind="audio", cancellable=True)
 
 
 @app.post("/api/grids/scan")
 def grids_scan():
-    return start_job("Traktor gridovi", lambda: grid_scan.scan(_progress))
+    return start_job("Traktor gridovi", lambda: grid_scan.scan(_progress, JOB_STOP), kind="grid_meta", cancellable=True)
 
 
 @app.get("/api/grids")
@@ -881,3 +901,8 @@ def save_audio_threshold(body: dict = Body(...)):
     SETTINGS['audio_similarity_threshold'] = value
     config.save(SETTINGS)
     return {'ok': True, 'threshold': value}
+
+
+@app.post('/api/grids/audio-search')
+def audio_grid_search():
+    return start_job('Audio pretraga promenljivog tempa', lambda: grid_scan.audio_search(_progress, JOB_STOP), kind='grid_audio', cancellable=True)

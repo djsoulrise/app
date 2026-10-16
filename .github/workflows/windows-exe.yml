@@ -21,6 +21,11 @@ jobs:
           python -m unittest discover -s tests -p "test_audio*.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_native_files.py" -v
+      - name: Test live UI and Start Stop controls
+        run: |
+          npm install --no-save playwright
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/ui-smoke.cjs
       - name: Package one executable including FFmpeg
         run: python -m PyInstaller --noconfirm --clean "DJ asistent.spec"
       - name: Check packaged EXE without opening a window

@@ -2,12 +2,14 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 import wave
 import numpy as np
 
 from app import db, audio_rhythm
+from app.scan_control import ScanCancelled
 from test_audio_rhythm import drum_audio
 
 
@@ -68,8 +70,20 @@ class AudioCacheTests(unittest.TestCase):
                     self.assertEqual(selected['id'],2)
                     report = audio_rhythm.matches(1)
                     self.assertTrue(any(t['id']==2 for t in report['accepted_items']))
+                    self.assertTrue(any(t['id']==2 for t in report['accepted_top']))
+                    self.assertLessEqual(len(report['accepted_top']),10)
                 finally:
                     SETTINGS['audio_similarity_threshold'] = old_cutoff
+                # Stop leaves completed descriptors untouched and resume uses the cache.
+                stop = threading.Event()
+                def progress(done,total,msg):
+                    if done == 0:
+                        stop.set()
+                before = db.rows('SELECT * FROM audio_rhythm ORDER BY track_id')
+                with self.assertRaises(ScanCancelled):
+                    audio_rhythm.scan(progress,stop)
+                self.assertEqual(before,db.rows('SELECT * FROM audio_rhythm ORDER BY track_id'))
+                self.assertEqual(audio_rhythm.scan()['cached'],3)
                 row = db.one('SELECT * FROM audio_rhythm WHERE track_id=1')
                 stat = os.stat(paths[0])
                 os.utime(paths[0], ns=(stat.st_atime_ns, stat.st_mtime_ns+1000000000))

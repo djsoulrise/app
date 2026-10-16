@@ -62,7 +62,8 @@ async function refreshStatus() {
       `Broadcast: ${b.running ? (b.last_connect ? 'povezan' : 'ceka') : 'ugasen'} | ` +
       (j.running ? `<b>${esc(j.phase)} ${j.done}/${j.total}</b>` : j.error ? `<span style="color:var(--bad)">${esc(j.error)}</span>` : '');
     state.status = s;
-    if (state.jobWasRunning && !j.running && !j.error) { toast('Zavrseno'); if (state.page !== 'sada') go(state.page); }
+    updateScanControls(j);
+    if (state.jobWasRunning && !j.running && !j.error) { toast(j.cancelled ? 'Zaustavljeno — rezultati sacuvani' : 'Zavrseno'); if (state.page !== 'sada') go(state.page); }
     state.jobWasRunning = j.running;
   } catch {}
 }
@@ -97,7 +98,8 @@ pages.sada = async () => {
     <div class="row"><input id="q" placeholder="Rucni izbor trenutne pesme (naziv ili izvodjac)..." style="flex:1;min-width:240px">
       <span id="modes"></span></div>
     <div id="res"></div><div id="sug"></div>
-    <h3>Veceras pusteno</h3><div id="played"></div>`;
+    <div class="evening-layout"><section><h3>Veceras pusteno</h3><div id="played"></div></section>
+    <section><h3>LIVE · 10 audio najslicnijih</h3><div id="liveaudio" class="card mut">Cekam trenutnu pesmu...</div></section></div>`;
   drawModes(); state._drawModes = drawModes;
   $('#q').addEventListener('input', guard(async e => {
     const q = e.target.value.trim();
@@ -111,11 +113,20 @@ pages.sada = async () => {
 };
 
 async function tickNow(first) {
+  if (state.tickBusy) return;
+  state.tickBusy = true;
+  try { await tickNowInner(first); }
+  finally { state.tickBusy = false; }
+}
+
+async function tickNowInner(first) {
   const n = await api('/api/now');
-  if (n.track_id && n.track_id !== state.curId) {
+  const audioChanged = state.status && (state.lastAudioRevision !== state.status.audio_revision || state.lastAudioThreshold !== state.status.audio_threshold);
+  if (n.track_id && (first || n.track_id !== state.curId || audioChanged)) {
     state.curId = n.track_id; $('#res') && ($('#res').innerHTML = '');
     await loadSuggest(n);
   } else if (!n.track_id) {
+    if ($('#liveaudio')) $('#liveaudio').textContent = 'Cekam trenutnu pesmu...';
     const b = state.status && state.status.broadcast;
     let diag = 'Jos nema trenutne pesme. Cekam Traktor (Broadcast / History) ili izaberi rucno ispod.';
     if (b && b.last_song) diag = `Broadcast je primio: <b>${esc(b.last_song)}</b> &mdash; ${b.last_match ? 'pesma je pronadjena' : '<b>nije pronadjena u biblioteci</b> (ucitaj biblioteku u Podesavanjima ili izaberi rucno)'}.`;
@@ -146,7 +157,12 @@ function renderTik(animate) {
 }
 
 async function loadSuggest(n) {
-  const d = await api(`/api/suggest?track_id=${state.curId}&mode=${state.mode}&strict=${state.strict}`);
+  const requestedId = state.curId;
+  const revision = state.status?.audio_revision, threshold = state.status?.audio_threshold;
+  const d = await api(`/api/suggest?track_id=${requestedId}&mode=${state.mode}&strict=${state.strict}`);
+  if (state.page !== 'sada' || state.curId !== requestedId) return;
+  state.lastAudioRevision = revision; state.lastAudioThreshold = threshold;
+  renderLiveAudio(d);
   const c = d.current, src = n ? n.source : '';
   state.audioDiagnostics = d.audio_diagnostics;
   if (state.tiker) {
@@ -178,7 +194,6 @@ async function loadSuggest(n) {
       <div class="row"><button class="sm pri" data-act="use" data-id="${t.id}">Pusteno / trenutna</button>
       <button class="sm" data-act="copysong" data-id="${t.id}">Copy Song</button>
       <button class="sm" data-act="dragsong" data-id="${t.id}">Prevuci u Traktor</button>
-      <button class="sm" data-act="copy" data-id="${t.id}">Kopiraj putanju</button>
       <button class="sm" data-act="reveal" data-id="${t.id}">Explorer</button></div></div>`).join('') + '</div>' +
     (d.items.length ? '' : '<p class="mut">Nema predloga. Ucitaj biblioteku u Podesavanjima.</p>');
 }
@@ -423,7 +438,6 @@ const actions = {
   mode: async el => { state.mode = el.dataset.m; state._drawModes(); if (state.curId) await loadSuggest(await api('/api/now')); },
   strict: async el => { state.strict = el.dataset.m; state._drawModes(); await api('/api/settings', {style_strictness: state.strict}); if (state.curId) await loadSuggest(await api('/api/now')); },
   use: async el => { await api('/api/now', {track_id: +el.dataset.id}); state.curId = null; closeModal(); if (state.page === 'sada') await tickNow(false); else toast('Postavljeno kao trenutna'); },
-  copy: async el => { const t = await api('/api/track-path/' + el.dataset.id); await navigator.clipboard.writeText(t.path); toast('Proverena putanja kopirana'); },
   copysong: async el => { await api('/api/copy-song/' + el.dataset.id, {}); toast('Audio fajl kopiran — ne samo putanja'); },
   dragsong: async el => { await api('/api/drag-song/' + el.dataset.id, {}); toast('Drzi naziv u otvorenom prozoru i prevuci ga u zaustavljeni Traktor deck'); },
   reveal: async el => { await api('/api/reveal/' + el.dataset.id, {}); },
@@ -455,8 +469,9 @@ const actions = {
   audiocurrent: async () => { const n = await api('/api/now'); if (!n.track_id) throw new Error('Nema trenutne pesme.'); state.audioSource = n.track_id; await audioLoadSources(n.track_id); await audioLoadMatches(); },
   audiothreshold: async () => { const value = +$('#audioThresholdNumber').value / 100; await api('/api/audio/threshold', {threshold: value}); state.audioSavedThreshold = value; toast('Prag sacuvan; koristi ga peti audio predlog'); await audioLoadMatches(); },
   audiocopyreport: async () => { if (!state.audioReport) throw new Error('Prvo prikazi slicne pesme.'); await navigator.clipboard.writeText(JSON.stringify(state.audioReport, null, 2)); toast('Audio izvestaj kopiran'); },
-  audioscan: async () => { await api('/api/audio/scan', {}); toast('Audio skeniranje pokrenuto'); },
-  gridscan: async () => { await api('/api/grids/scan', {}); toast('Provera gridova pokrenuta'); },
+  scanstart: async el => { const endpoint = el.dataset.kind === 'grid_audio' ? '/api/grids/audio-search' : '/api/audio/scan'; await api(endpoint, {}); toast('Sken pokrenut / nastavljen'); await refreshStatus(); },
+  scanstop: async el => { await api('/api/job/stop', {kind: el.dataset.kind}); toast('Zaustavljam sken; zavrseni rezultati ostaju'); await refreshStatus(); },
+  gridscan: async () => { await api('/api/grids/scan', {}); toast('Provera gridova pokrenuta'); await refreshStatus(); },
   // dupes
   finddupes: async () => {
     $('#dupres').innerHTML = '<p class="mut">Trazim...</p>';
@@ -556,7 +571,7 @@ pages.audio = async () => {
   state.audioSavedThreshold = s.threshold;
   $('#main').innerHTML = `<h2>Audio ritam — deep scan / slicne pesme</h2>
   <p>Skenirano: <b>${s.counts.ok || 0}</b>; greske: ${s.counts.error || 0}. Postojeci sken se koristi odmah; poredjenje i promena praga ne zahtevaju novi sken.</p>
-  <button class="pri" data-act="audioscan">Pokreni / nastavi audio deep scan</button>
+  ${scanButtons('audio')}
   <div class="card"><h3>Prag audio slicnosti</h3>
   <div class="row"><input type="range" id="audioThresholdRange" min="50" max="100" step="1" value="${Math.round(s.threshold*100)}" style="width:260px">
   <input type="number" id="audioThresholdNumber" min="50" max="100" step="1" value="${Math.round(s.threshold*100)}" style="width:80px"> %
@@ -568,6 +583,7 @@ pages.audio = async () => {
   <p>Ova lista poredi celu skeniranu biblioteku. Automatski peti predlog dodatno postuje izvorne filtere i ne ponavlja prve cetiri pesme.</p>
   <div id="audioResults"></div></div>
   ${s.errors.length ? '<details><summary>Greske skeniranja</summary>' + s.errors.map(t => `<p>${name(t)}: ${esc(t.error)}</p>`).join('') + '</details>' : ''}`;
+  updateScanControls(state.status?.job || {});
   await audioLoadSources(state.audioSource || state.curId);
   if ($('#audioSource').value) await audioLoadMatches();
 };
@@ -624,10 +640,53 @@ document.addEventListener('keydown', e => {
 
 pages.grids = async () => {
   const d = await api('/api/grids');
+  state.gridItems = d.items;
   $('#main').innerHTML = `<h2>Fleksibilni beatgridovi</h2>
-  <button class="pri" data-act="gridscan">Proveri gridove iz collection.nml</button>
-  <p>Traktor kolekcija se samo cita. Vise markera ne znaci automatski promenljiv tempo. Audio procena je odvojena i zahteva deep scan.</p>
+  <button class="pri" data-act="gridscan" data-scan-start="grid_meta">Proveri gridove iz collection.nml</button>
+  <h3>Audio pretraga promenljivog tempa</h3>${scanButtons('grid_audio')}
+  <p>Provera NML cita Traktor markere. Audio pretraga koristi postojeci deep scan i obradjuje samo nove ili izmenjene fajlove. Audio nalaz je sumnja na promenljiv tempo, ne automatska popravka gridova.</p>
   <p>${d.items.length} pesama; ${d.nml_checked ? 'NML provera postoji' : 'pokreni proveru za detalje BPM markera'}.</p>
-  <table><thead><tr><th>Pesma</th><th>Markeri / BPM vrednosti</th><th>Nalaz</th><th>Audio</th><th></th></tr></thead><tbody>
-  ${d.items.map(t => `<tr><td>${name(t)}</td><td>${t.grid_markers_checked || 0} / ${t.grid_bpm_values ?? '?'}</td><td>${esc(t.grid_reason)}</td><td>${t.audio_variable ? 'sumnja na promenu tempa' : 'nema audio potvrde promene'}</td><td><button data-act="reveal" data-id="${t.id}">Explorer</button></td></tr>`).join('')}</tbody></table>`;
+  <input id="gridQuery" placeholder="Pretrazi pronadjene fleksibilne gridove po nazivu / izvodjacu" style="width:100%;margin-bottom:12px">
+  <div id="gridResults"></div>`;
+  renderGridResults('');
+  updateScanControls(state.status?.job || {});
 };
+
+function renderGridResults(query) {
+  const q = query.toLocaleLowerCase();
+  const items = (state.gridItems || []).filter(t => `${t.artist} ${t.title}`.toLocaleLowerCase().includes(q));
+  $('#gridResults').innerHTML = `<p>Prikazano: ${items.length}</p><table><thead><tr><th>Pesma</th><th>Markeri / BPM vrednosti</th><th>Nalaz</th><th>Audio</th><th></th></tr></thead><tbody>
+  ${items.map(t => `<tr><td>${name(t)}</td><td>${t.grid_markers_checked || 0} / ${t.grid_bpm_values ?? '?'}</td><td>${esc(t.grid_reason)}</td><td>${t.audio_variable ? 'sumnja na promenu tempa' : 'nema audio potvrde promene'}</td><td><button data-act="reveal" data-id="${t.id}">Explorer</button></td></tr>`).join('')}</tbody></table>`;
+}
+
+function scanButtons(kind) {
+  return `<div class="row"><button class="pri" data-act="scanstart" data-kind="${kind}" data-scan-start="${kind}">Start / nastavi</button>
+  <button class="bad" data-act="scanstop" data-kind="${kind}" data-scan-stop="${kind}" disabled>Stop</button>
+  <span class="small mut" data-scan-status="${kind}">Sken miruje</span></div>`;
+}
+
+function updateScanControls(job) {
+  $$('[data-scan-start]').forEach(el => { el.disabled = !!job.running; });
+  $$('[data-scan-stop]').forEach(el => { el.disabled = !job.running || job.kind !== el.dataset.scanStop || !!job.stop_requested; });
+  $$('[data-scan-status]').forEach(el => {
+    if (job.kind !== el.dataset.scanStatus) { el.textContent = job.running ? 'Drugi sken je u toku' : 'Sken miruje'; return; }
+    const phase = job.stop_requested && job.running ? 'Zaustavljanje...' : job.cancelled ? 'Zaustavljeno — sacuvano' : job.running ? job.phase : job.error ? job.error : 'Zavrseno';
+    el.textContent = `${phase} · ${job.done || 0}/${job.total || 0}`;
+  });
+}
+
+function renderLiveAudio(data) {
+  const element = $('#liveaudio');
+  if (!element) return;
+  const report = data.audio_diagnostics || {}, items = report.accepted_top || [];
+  element.className = 'card';
+  element.innerHTML = `<p class="small mut">${data.current ? name(data.current) : ''}<br>Prag: ${report.threshold ? (report.threshold*100).toFixed(0)+'%' : '?'} · isti uslovi kao peti AUDIO RITAM predlog</p>` +
+    (items.length ? items.map((t,i) => `<div class="live-audio-item"><div><b>${i+1}. ${name(t)}</b> <span class="badge acc">${t.score.toFixed(1)}%</span></div>
+      <div class="small mut">Audio BPM ${t.audio.bpm} · razlika tempa ${t.tempo_delta.toFixed(1)}%</div>
+      <div class="row"><button class="sm" data-act="copysong" data-id="${t.id}">Copy Song</button><button class="sm" data-act="dragsong" data-id="${t.id}">Prevuci</button><button class="sm" data-act="reveal" data-id="${t.id}">Explorer</button></div></div>`).join('') : `<p class="mut">${esc(data.audio_status || 'Nema rezultata koji prolaze audio uslove.')}</p>`) +
+    (items.length && items.length<10 ? `<p class="small mut">Prolazi ${items.length} pesama; lista se ne dopunjava nasumicno.</p>` : '');
+}
+
+document.addEventListener('input', e => {
+  if (e.target.id === 'gridQuery') renderGridResults(e.target.value);
+});

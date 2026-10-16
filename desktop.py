@@ -59,7 +59,7 @@ def main() -> None:
     if not _wait_port(port):
         print(f"Server nije pokrenut (port {port} je mozda zauzet).")
         sys.exit(1)
-    webview.create_window("DJ asistent — Audio 3", f"http://127.0.0.1:{port}", width=1400, height=900, min_size=(900, 600))
+    webview.create_window("DJ asistent — Audio 4", f"http://127.0.0.1:{port}", width=1400, height=900, min_size=(900, 600))
     webview.start()
     server.should_exit = True
 

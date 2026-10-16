@@ -111,3 +111,21 @@ AUDIO 3 — EXPLORER, COPY SONG I WINDOWS PREVLACENJE
   oslanja se na polozaj prozora. Traktorov load lock ostaje tvoja dodatna zastita.
 - Prethodni DownloadURL prevlacenje (web-link track.mp3) uklonjeno je.
 - Baza, prag slicnosti i prethodni audio sken ostaju sacuvani.
+
+
+AUDIO 4 — LIVE 10 I START / STOP
+- Pored Veceras pusteno nalazi se live lista do 10 audio rezultata koji
+  prolaze isti skup kandidata, prag i audio uslove kao peti predlog.
+- Lista prati trenutnu pesmu i osvezava se posle novih audio rezultata.
+  Duplicirane pesme se izostavljaju; lista se nikada ne dopunjava nasumicno.
+- Tekstualno dugme Kopiraj putanju je uklonjeno. Copy Song / Prevuci /
+  Explorer ostaju na predlozima i u live listi.
+- Audio ritam: Start / nastavi pokrece sken; Stop prekida dekoder ili
+  analizu. Zavrsene pesme su odmah sacuvane; trenutna nedovrsena pesma se
+  ponovo obradi pri sledecem Start. Stari uspesni sken se ne brise.
+- Fleksibilni gridovi: NML provera ostaje. Audio pretraga ima zasebne
+  Start / Stop kontrole i koristi istu audio bazu bez ponavljanja skena
+  neizmenjenih fajlova. Dodatno mozes pretraziti rezultate po nazivu.
+- Audio promenljiv tempo je samo sumnja. Aplikacija ne menja Traktor
+  kolekciju niti beatgridove. Vec sacuvana NML provera ostaje ako je nova
+  provera prekinuta pre zavrsetka.
