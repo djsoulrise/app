@@ -225,6 +225,7 @@ def suggest(current_id: int, mode: str | None = None, n: int = 5, surprise: bool
     # Preserve original first four; audio can replace only the fifth slot.
     # Unavailable/weak audio evidence leaves the deterministic original fifth.
     audio_status = None
+    audio_diagnostics = {}
     if n == 5 and len(items) >= 4:
         from . import audio_rhythm
         first_four = items[:4]
@@ -234,7 +235,7 @@ def suggest(current_id: int, mode: str | None = None, n: int = 5, surprise: bool
             excluded_names.discard(core_title(items[4]["artist"] or "", items[4]["title"] or ""))
         pool = [c["t"] for c in ok
                 if core_title(c["t"]["artist"] or "", c["t"]["title"] or "") not in excluded_names]
-        audio, audio_status = audio_rhythm.fifth(cur, pool, {t["id"] for t in first_four})
+        audio, audio_status = audio_rhythm.fifth(cur, pool, {t["id"] for t in first_four}, audio_diagnostics)
         if audio:
             audio.update(style_label=styles.describe(_vec(audio)), note=notes.get(audio["id"]), parts={"audio_rhythm": audio["score"]/100})
             items = first_four + [audio]
@@ -244,4 +245,4 @@ def suggest(current_id: int, mode: str | None = None, n: int = 5, surprise: bool
     blocked_hist.sort(key=lambda x: -x[0])
     return {"current": cur, "mode": mode, "strict": strict, "relaxed": relaxed, "candidates": len(ok),
             "blocked_history": [f"{t['artist']} - {t['title']} ({styles.describe(_vec(t))})" for _, t in blocked_hist[:3]],
-            "items": items, "audio_status": audio_status}
+            "items": items, "audio_status": audio_status, "audio_diagnostics": audio_diagnostics}

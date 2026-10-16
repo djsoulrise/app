@@ -42,12 +42,22 @@ def main() -> None:
                                            'decoder_in_bundle': str(Path(decoder).resolve()).startswith(str(Path(sys._MEIPASS).resolve()))}), encoding='utf-8')
         return
     port = int(SETTINGS["port"])
+    # Do not silently attach the new EXE to an older process on the same port.
+    with socket.socket() as probe:
+        probe.settimeout(.4)
+        occupied = probe.connect_ex(("127.0.0.1", port)) == 0
+    if occupied:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None,
+            f"Port {port} je vec zauzet. Zatvori prethodni DJ asistent pa ponovo pokreni ovaj EXE. Baza i audio sken ostaju sacuvani.",
+            "DJ asistent — prethodna verzija je jos otvorena", 0x30)
+        return
     server = uvicorn.Server(uvicorn.Config(app, host=SETTINGS["host"], port=port, log_level="warning"))
     threading.Thread(target=server.run, daemon=True).start()
     if not _wait_port(port):
         print(f"Server nije pokrenut (port {port} je mozda zauzet).")
         sys.exit(1)
-    webview.create_window("DJ asistent", f"http://127.0.0.1:{port}", width=1400, height=900, min_size=(900, 600))
+    webview.create_window("DJ asistent — Audio 2", f"http://127.0.0.1:{port}", width=1400, height=900, min_size=(900, 600))
     webview.start()
     server.should_exit = True
 

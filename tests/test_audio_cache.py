@@ -42,6 +42,34 @@ class AudioCacheTests(unittest.TestCase):
                 self.assertIsNone(reason)
                 selected, reason = audio_rhythm.fifth(current,candidates,{2})
                 self.assertIsNone(selected)
+                # A measured match can be inspected even when the saved threshold rejects it.
+                c2 = db.one('SELECT * FROM audio_rhythm WHERE track_id=2')
+                feature = json.loads(c2['features'])
+                profile = np.array(feature['profile'])
+                profile += .4*np.roll(profile,7,axis=1)
+                profile /= np.linalg.norm(profile)
+                feature['profile'] = profile.tolist()
+                db.conn().execute('UPDATE audio_rhythm SET features=? WHERE track_id=2', (json.dumps(feature),))
+                db.conn().commit()
+                from app.config import SETTINGS
+                old_cutoff = SETTINGS.get('audio_similarity_threshold', audio_rhythm.MIN_SIMILARITY)
+                try:
+                    source = json.loads(db.one('SELECT features FROM audio_rhythm WHERE track_id=1')['features'])
+                    score = audio_rhythm.similarity(source,feature)
+                    self.assertGreater(score, .51); self.assertLess(score, .99)
+                    SETTINGS['audio_similarity_threshold'] = score+.005
+                    diagnostic = {}
+                    selected, _ = audio_rhythm.fifth(current,[candidates[0]],set(),diagnostic)
+                    self.assertIsNone(selected)
+                    self.assertEqual(diagnostic['compared'],1)
+                    self.assertIn('ispod podesenog praga', diagnostic['top'][0]['reasons'])
+                    SETTINGS['audio_similarity_threshold'] = score-.005
+                    selected, _ = audio_rhythm.fifth(current,[candidates[0]],set())
+                    self.assertEqual(selected['id'],2)
+                    report = audio_rhythm.matches(1)
+                    self.assertTrue(any(t['id']==2 for t in report['accepted_items']))
+                finally:
+                    SETTINGS['audio_similarity_threshold'] = old_cutoff
                 row = db.one('SELECT * FROM audio_rhythm WHERE track_id=1')
                 stat = os.stat(paths[0])
                 os.utime(paths[0], ns=(stat.st_atime_ns, stat.st_mtime_ns+1000000000))

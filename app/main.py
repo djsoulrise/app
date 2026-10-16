@@ -146,7 +146,7 @@ def status():
 
 SETTING_KEYS = ["music_folders", "nml_path", "history_dir", "dupes_dir", "export_dir", "main_folder_hint", "port",
                 "broadcast_enabled", "broadcast_port", "model", "weights", "mode", "style_strictness", "guest_limit", "tip_text",
-                "tip_ips_payload", "audience"]
+                "tip_ips_payload", "audience", "audio_similarity_threshold"]
 
 
 @app.get("/api/settings")
@@ -159,6 +159,11 @@ def get_settings(request: Request):
 
 @app.post("/api/settings")
 def set_settings(body: dict = Body(...)):
+    if 'audio_similarity_threshold' in body:
+        try:
+            body['audio_similarity_threshold'] = audio_rhythm.threshold(body['audio_similarity_threshold'])
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, str(exc))
     for k in SETTING_KEYS:
         if k in body:
             SETTINGS[k] = body[k]
@@ -810,3 +815,30 @@ def grids_scan():
 @app.get("/api/grids")
 def grids_list():
     return grid_scan.results()
+
+
+@app.get("/api/audio/tracks")
+def audio_tracks(q: str = ''):
+    return audio_rhythm.scanned_tracks(q)
+
+
+@app.get("/api/audio/matches")
+def audio_matches(track_id: int, threshold: float | None = None):
+    try:
+        report = audio_rhythm.matches(track_id, cutoff=threshold)
+        report['recommendation'] = suggest.suggest(track_id).get('audio_diagnostics', {})
+        report['saved_threshold'] = audio_rhythm.threshold()
+        return report
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/audio/threshold")
+def save_audio_threshold(body: dict = Body(...)):
+    try:
+        value = audio_rhythm.threshold(body['threshold'])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(400, str(exc))
+    SETTINGS['audio_similarity_threshold'] = value
+    config.save(SETTINGS)
+    return {'ok': True, 'threshold': value}

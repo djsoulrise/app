@@ -1,7 +1,12 @@
 """Run with python -m unittest discover -s tests -p test_audio_rhythm.py."""
 import unittest
+import json
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 import numpy as np
-from app.audio_rhythm import analyze_pcm, similarity, MIN_SIMILARITY
+from app.audio_rhythm import analyze_pcm, similarity, comparison, threshold, MIN_SIMILARITY
+from app import config
 
 
 def drum_audio(kind='dance', gain=1):
@@ -50,6 +55,28 @@ class RhythmTests(unittest.TestCase):
 
     def test_large_tempo_difference_excluded(self):
         self.assertIsNone(similarity(self.a, {**self.a, 'bpm': 155}))
+
+    def test_threshold_validation(self):
+        for value in (True, False, 'nan', 'inf', .49, 1.01):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                threshold(value)
+        self.assertEqual(threshold(.50), .50)
+        self.assertEqual(threshold(1), 1)
+
+    def test_threshold_persists_without_rescan(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder)/'settings.json'
+            with patch.object(config, 'SETTINGS_FILE', target):
+                config.save({**config.DEFAULTS, 'audio_similarity_threshold': .85})
+                self.assertEqual(config.load()['audio_similarity_threshold'], .85)
+
+    def test_fft_score_matches_original_phase_search(self):
+        rng = np.random.default_rng(30)
+        a, b = rng.random((3,64)), rng.random((3,64))
+        a /= np.linalg.norm(a); b /= np.linalg.norm(b)
+        original = max(float((a*np.roll(b,s,axis=1)).sum()) for s in range(64))
+        measured = comparison({**self.a, 'profile': a.tolist()}, {**self.a, 'profile': b.tolist()})
+        self.assertAlmostEqual(measured['groove'], original, places=10)
 
 
 if __name__ == '__main__':

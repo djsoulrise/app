@@ -34,6 +34,7 @@ DEFAULTS = {
     "weights": DEFAULT_WEIGHTS,
     "mode": "ravno",
     "style_strictness": "normalno",
+    "audio_similarity_threshold": 0.97,
     "guest_limit": {"count": 2, "minutes": 30},
     "tip_text": "",
     "tip_ips_payload": "",

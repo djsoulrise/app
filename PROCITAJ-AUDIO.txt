@@ -78,3 +78,17 @@ DODATNA PREPORUKA ZA SLEDECU IZMENU
 Dugme za kratko preslusavanje ritmickog segmenta i detaljan prikaz
 'zasto je predlozena'. To bi pomoglo da zajedno kalibrisemo audio prag,
 bez menjanja originalnih preporuka ili nasumicnog forsiranja petog mesta.
+
+
+AUDIO 2 — LISTA SLICNIH PESAMA I PODESIV PRAG
+- Pre pokretanja novog EXE-a zatvori prethodni DJ asistent.
+- Audio ritam: pretrazi skeniranu pesmu ili izaberi trenutnu iz Traktora.
+- Prikazi slicne poredi celu skeniranu biblioteku, bez menjanja trenutne pesme.
+- Rezultati koji prolaze audio uslove odvojeni su od najblizih odbacenih.
+- Prag 50-100%: klizac/broj menjaju pregled; Sacuvaj prag trajno menja peti
+  audio predlog. Ostali audio uslovi stabilnosti i tempa ostaju aktivni.
+- Detalji objasnjavaju koliko kandidata prolazi izvorne filtere, koliko ima
+  vazeci sken, najbolje audio skorove i razloge odbacivanja.
+- Kopiraj audio izvestaj kopira tekst za dijagnostiku; nista se ne salje samo.
+- Analizator i format skena ostaju VERSION 1: postojeca baza se ponovo koristi.
+- Skor 97% nije 97% verovatnoce; nizi prag nije garancija istog ritma.

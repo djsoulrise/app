@@ -186,42 +186,159 @@ def scan(progress=None):
     return result
 
 
-def similarity(a, b):
+def threshold(value=None):
+    import math
+    from .config import SETTINGS
+    if value is None:
+        value = SETTINGS.get('audio_similarity_threshold', MIN_SIMILARITY)
+    if isinstance(value, bool):
+        raise ValueError('Prag mora biti broj od 50 do 100%.')
+    value = float(value)
+    if not math.isfinite(value) or not .5 <= value <= 1:
+        raise ValueError('Prag mora biti od 50 do 100%.')
+    return value
+
+
+def comparison(a, b):
+    """Return a measured score even when a quality gate rejects the pair."""
     import numpy as np
-    if min(a['periodicity'], b['periodicity']) < .18 or min(a['consistency'], b['consistency']) < .65:
-        return None
+    reasons = []
+    if min(a['periodicity'], b['periodicity']) < .18:
+        reasons.append('slaba periodicnost ritma (<0.18)')
+    if min(a['consistency'], b['consistency']) < .65:
+        reasons.append('nestabilan ritmicki obrazac (<0.65)')
     if a['variable_tempo_suspected'] or b['variable_tempo_suspected']:
-        return None
+        reasons.append('audio sumnja na promenljiv tempo')
     tempo_delta = min(abs(a['bpm'] - b['bpm'] * scale) / a['bpm'] for scale in (.5, 1, 2))
     if tempo_delta > .04:
-        return None
+        reasons.append('razlika audio tempa preko 4%')
     pa, pb = np.array(a['profile']), np.array(b['profile'])
-    groove = max(float((pa * np.roll(pb, s, axis=1)).sum()) for s in range(64))
-    return .9 * groove + .1 * max(0, 1-tempo_delta/.04)
+    # Exact circular correlation, equivalent to testing all 64 phase shifts.
+    correlation = np.fft.irfft((np.conj(np.fft.rfft(pa, axis=1)) *
+                               np.fft.rfft(pb, axis=1)).sum(axis=0), n=64)
+    groove = float(np.clip(correlation.max(), 0, 1))
+    score = .9 * groove + .1 * max(0, 1-tempo_delta/.04)
+    return {'score': score, 'groove': groove, 'tempo_delta': tempo_delta, 'reasons': reasons}
+
+
+def similarity(a, b):
+    result = comparison(a, b)
+    return None if result['reasons'] else result['score']
+
+
+def cache_reason(row, track):
+    if row is None:
+        return 'pesma nije audio skenirana'
+    if row['status'] != 'ok':
+        return 'greska skena: ' + (row['error'] or 'nepoznata greska')
+    if row['version'] != VERSION:
+        return 'sken je iz druge verzije analizatora'
+    if row['path'] != track['path']:
+        return 'putanja pesme se promenila'
+    try:
+        stat = os.stat(track['path'])
+    except OSError:
+        return 'audio fajl trenutno nije dostupan'
+    if stat.st_size != row['size'] or stat.st_mtime_ns != row['mtime']:
+        return 'fajl se promenio posle skeniranja (velicina ili datum izmene)'
+    return None
+
+
+def source_metrics(features):
+    return {k: features.get(k) for k in ('bpm', 'periodicity', 'consistency',
+                                       'tempo_spread', 'variable_tempo_suspected', 'blocks')}
+
+
+def rank_audio(current, candidates, excluded=(), cutoff=None):
+    from collections import Counter
+    init()
+    cutoff = threshold(cutoff)
+    cached = {r['track_id']: r for r in db.rows('SELECT * FROM audio_rhythm')}
+    reason = cache_reason(cached.get(current['id']), current)
+    report = {'threshold': cutoff, 'current_id': current['id'], 'current':
+              {'id': current['id'], 'artist': current.get('artist'), 'title': current.get('title')},
+              'current_error': reason, 'current_audio': None, 'pool': len(candidates),
+              'counts': {}, 'compared': 0, 'top': []}
+    if reason:
+        return [], report
+    features = json.loads(cached[current['id']]['features'])
+    report['current_audio'] = source_metrics(features)
+    results, counts = [], Counter()
+    for t in candidates:
+        if t['id'] == current['id'] or t['id'] in excluded:
+            counts['vec izabrana'] += 1
+            continue
+        reason = cache_reason(cached.get(t['id']), t)
+        if reason:
+            counts[reason] += 1
+            continue
+        other = json.loads(cached[t['id']]['features'])
+        measured = comparison(features, other)
+        reasons = list(measured['reasons'])
+        if measured['score'] < cutoff:
+            reasons.append('ispod podesenog praga')
+        for reason in reasons:
+            counts[reason] += 1
+        if not reasons:
+            counts['prolazi audio uslove'] += 1
+        results.append({'track': t, 'audio': source_metrics(other), **measured,
+                        'reasons': reasons, 'accepted': not reasons})
+    results.sort(key=lambda x: (-x['score'], x['track']['id']))
+    report.update(counts=dict(counts), compared=len(results))
+    report['top'] = [public_match(r) for r in results[:5]]
+    return results, report
+
+
+def public_match(result):
+    t = result['track']
+    return {'id': t['id'], 'artist': t.get('artist') or '', 'title': t.get('title') or '',
+            'score': round(result['score']*100, 2), 'groove': round(result['groove']*100, 2),
+            'tempo_delta': round(result['tempo_delta']*100, 2), 'audio': result['audio'],
+            'reasons': result['reasons'], 'accepted': result['accepted']}
 
 
 def status():
     init()
     counts = db.rows('SELECT status,COUNT(*) n FROM audio_rhythm GROUP BY status')
-    return {'counts': {r['status']: r['n'] for r in counts}, 'version': VERSION}
+    errors = db.rows("SELECT t.id,t.artist,t.title,a.error FROM audio_rhythm a JOIN tracks t ON t.id=a.track_id WHERE a.status='error' LIMIT 10")
+    return {'counts': {r['status']: r['n'] for r in counts}, 'version': VERSION,
+            'threshold': threshold(), 'errors': errors}
 
 
-def fifth(current, candidates, excluded):
+def scanned_tracks(q=''):
     init()
-    c = db.one('SELECT * FROM audio_rhythm WHERE track_id=?', (current['id'],))
-    if not valid(c, current):
-        return None, 'Peti audio predlog: trenutna pesma nema vazeci audio sken.'
-    features = json.loads(c['features'])
-    cached = {r['track_id']: r for r in db.rows("SELECT * FROM audio_rhythm WHERE status='ok'")}
-    best, best_score = None, MIN_SIMILARITY
-    for t in candidates:
-        if t['id'] in excluded or not valid(cached.get(t['id']), t):
-            continue
-        score = similarity(features, json.loads(cached[t['id']]['features']))
-        if score is not None and score >= best_score:
-            best, best_score = t, score
-    if best is None:
-        return None, 'Peti audio predlog: nema dovoljno pouzdanog ritmickog poklapanja.'
-    return dict(best, score=round(best_score*100, 1), label='AUDIO RITAM',
-                audio_match=True, why=[f'Audio ritam: slicnost {best_score:.1%} (nije verovatnoca niti dokaz identicnog ritma).',
-                'Poredjenje bas/srednji/visoki udarci kroz celu pesmu; bez tagova u audio oceni.']), None
+    return db.rows("""SELECT t.id,t.artist,t.title FROM tracks t JOIN audio_rhythm a ON a.track_id=t.id
+                      WHERE a.status='ok' AND (LOWER(COALESCE(t.artist,'') || ' ' || COALESCE(t.title,'')) LIKE ?)
+                      ORDER BY t.artist,t.title LIMIT 200""", ('%'+q.lower()+'%',))
+
+
+def matches(track_id, cutoff=None, limit=50):
+    current = db.one('SELECT * FROM tracks WHERE id=?', (track_id,))
+    if not current:
+        raise ValueError('Pesma nije pronadjena.')
+    # Explorer covers the whole scanned library, separately from recommendation gates.
+    candidates = db.rows("SELECT t.* FROM tracks t JOIN audio_rhythm a ON a.track_id=t.id WHERE a.status='ok' AND t.id!=?", (track_id,))
+    results, report = rank_audio(current, candidates, cutoff=cutoff)
+    report['accepted_total'] = sum(r['accepted'] for r in results)
+    report['items'] = [public_match(r) for r in results[:max(1, min(limit, 100))]]
+    report['accepted_items'] = [public_match(r) for r in results if r['accepted']][:50]
+    report['scope'] = 'Cela audio skenirana biblioteka; bez izvornih stilskih/key/istorijskih filtera. Lista nije automatska preporuka.'
+    return report
+
+
+def fifth(current, candidates, excluded, diagnostics=None):
+    results, report = rank_audio(current, candidates, excluded)
+    if diagnostics is not None:
+        diagnostics.update(report)
+    if report['current_error']:
+        return None, 'Peti audio predlog: ' + report['current_error'] + '.'
+    accepted = [r for r in results if r['accepted']]
+    if not accepted:
+        best = f" Najblizi audio skor: {report['top'][0]['score']:.2f}%." if report['top'] else ''
+        return None, (f"Audio: uporedjeno {report['compared']}/{report['pool']} kandidata; prag {report['threshold']:.0%}." + best + ' Nema kandidata koji prolazi sve audio uslove.')
+    winner = accepted[0]
+    return dict(winner['track'], score=round(winner['score']*100, 1), label='AUDIO RITAM',
+                audio_match=True, why=[f"Audio ritam: slicnost {winner['score']:.1%}; sacuvani prag {report['threshold']:.0%}.",
+                'Audio skor nije verovatnoca niti dokaz identicnog ritma.']), None
+
+

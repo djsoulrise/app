@@ -148,6 +148,7 @@ function renderTik(animate) {
 async function loadSuggest(n) {
   const d = await api(`/api/suggest?track_id=${state.curId}&mode=${state.mode}&strict=${state.strict}`);
   const c = d.current, src = n ? n.source : '';
+  state.audioDiagnostics = d.audio_diagnostics;
   if (state.tiker) {
     state.tikCur = c; state.tikItems = d.items; state.tikIdx = 0;
     renderTik(false);
@@ -167,7 +168,7 @@ async function loadSuggest(n) {
   if (d.relaxed && d.relaxed.length) notes.push('Premalo pesama u istom stilu, opusten filter: ' + d.relaxed.join(', '));
   $('#cur').innerHTML = `<div class="card cur" draggable="true" data-drag="${c.id}"><div class="mut small">TRENUTNA (${esc(src || '')}) &middot; stil: ${esc(c.style_label)}</div>
     <div class="big">${name(c)}</div>${badges(c)}</div>`;
-  $('#sug').innerHTML = (notes.length ? `<div class="small mut">${notes.join('<br>')}</div>` : '') + '<h3>Sledecih 5</h3><div class="grid">' + d.items.map(t => `
+  $('#sug').innerHTML = audioDiagnosticHtml(d.audio_diagnostics) + (notes.length ? `<div class="small mut">${notes.join('<br>')}</div>` : '') + '<h3>Sledecih 5</h3><div class="grid">' + d.items.map(t => `
     <div class="card" draggable="true" data-drag="${t.id}">
       <div><span class="badge ${t.label === 'siguran izbor' ? 'ok' : 'acc'}">${t.label}</span><b style="float:right">${t.score}</b></div>
       <div class="big" style="font-size:20px">${name(t)}</div>${badges(t)}
@@ -445,6 +446,11 @@ const actions = {
   tagign: async el => { await api('/api/tags/flag', {names: [el.dataset.n], ignored: +el.dataset.v}); go('tags'); },
   tagdel: async el => { if (confirm('Obrisati tag sa svih pesama?')) { await api('/api/tags/delete', {name: el.dataset.n}); go('tags'); } },
   junkall: async () => { await api('/api/tags/flag', {names: $$('.tg:checked').map(c => c.dataset.n), junk: 1, ignored: 1}); go('tags'); },
+  audiosearch: async () => audioLoadSources(),
+  audiomatches: audioLoadMatches,
+  audiocurrent: async () => { const n = await api('/api/now'); if (!n.track_id) throw new Error('Nema trenutne pesme.'); state.audioSource = n.track_id; await audioLoadSources(n.track_id); await audioLoadMatches(); },
+  audiothreshold: async () => { const value = +$('#audioThresholdNumber').value / 100; await api('/api/audio/threshold', {threshold: value}); state.audioSavedThreshold = value; toast('Prag sacuvan; koristi ga peti audio predlog'); await audioLoadMatches(); },
+  audiocopyreport: async () => { if (!state.audioReport) throw new Error('Prvo prikazi slicne pesme.'); await navigator.clipboard.writeText(JSON.stringify(state.audioReport, null, 2)); toast('Audio izvestaj kopiran'); },
   audioscan: async () => { await api('/api/audio/scan', {}); toast('Audio skeniranje pokrenuto'); },
   gridscan: async () => { await api('/api/grids/scan', {}); toast('Provera gridova pokrenuta'); },
   // dupes
@@ -548,12 +554,75 @@ api('/api/settings').then(s => { state.strict = s.style_strictness || 'normalno'
 
 pages.audio = async () => {
   const s = await api('/api/audio/status');
-  $('#main').innerHTML = `<h2>Audio ritam — deep scan</h2>
-  <p>Cela pesma se analizira lokalno. Baza pamti sken i obradjuje samo nove ili izmenjene fajlove. Potrebni su stvarni muzicki fajlovi na ovom racunaru.</p>
-  <p>Skenirano: ${s.counts.ok || 0}; greske: ${s.counts.error || 0}. Prvi sken moze dugo da traje. Napredak je u vrhu ekrana; zavrseni fajlovi ostaju sacuvani ako zatvoris aplikaciju.</p>
+  state.audioSavedThreshold = s.threshold;
+  $('#main').innerHTML = `<h2>Audio ritam — deep scan / slicne pesme</h2>
+  <p>Skenirano: <b>${s.counts.ok || 0}</b>; greske: ${s.counts.error || 0}. Postojeci sken se koristi odmah; poredjenje i promena praga ne zahtevaju novi sken.</p>
   <button class="pri" data-act="audioscan">Pokreni / nastavi audio deep scan</button>
-  <p>Peti predlog: samo dovoljno slican audio ritam medju kandidatima koji prolaze izvorne filtere. Bez dobrog audio poklapanja ostaje izvorni peti predlog. Audio skor je mera slicnosti, ne dokaz identicnog ritma.</p>`;
+  <div class="card"><h3>Prag audio slicnosti</h3>
+  <div class="row"><input type="range" id="audioThresholdRange" min="50" max="100" step="1" value="${Math.round(s.threshold*100)}" style="width:260px">
+  <input type="number" id="audioThresholdNumber" min="50" max="100" step="1" value="${Math.round(s.threshold*100)}" style="width:80px"> %
+  <button class="pri" data-act="audiothreshold">Sacuvaj prag</button></div>
+  <p>Nizi prag prihvata slabiju slicnost. Promena klizaca sluzi za pregled liste; tek 'Sacuvaj prag' menja peti predlog. Uslovi stabilnosti ritma i audio tempa i dalje vaze. Skor nije verovatnoca niti dokaz identicnog ritma.</p></div>
+  <div class="card"><h3>Sta je sken pronasao slicno?</h3>
+  <div class="row"><input id="audioQuery" placeholder="Pretrazi skenirane pesme po izvodjacu / naslovu" style="min-width:300px"><button data-act="audiosearch">Pretrazi</button><button data-act="audiocurrent">Trenutna pesma iz Traktora</button></div>
+  <div class="row"><select id="audioSource" style="max-width:75%"></select><button class="pri" data-act="audiomatches">Prikazi slicne</button></div>
+  <p>Ova lista poredi celu skeniranu biblioteku. Automatski peti predlog dodatno postuje izvorne filtere i ne ponavlja prve cetiri pesme.</p>
+  <div id="audioResults"></div></div>
+  ${s.errors.length ? '<details><summary>Greske skeniranja</summary>' + s.errors.map(t => `<p>${name(t)}: ${esc(t.error)}</p>`).join('') + '</details>' : ''}`;
+  await audioLoadSources(state.audioSource || state.curId);
+  if ($('#audioSource').value) await audioLoadMatches();
 };
+
+function audioDiagnosticHtml(d) {
+  if (!d || !d.current_id) return '';
+  return `<details class="card"><summary>Zasto jeste / nije izabran AUDIO RITAM?</summary>
+  <p>Prag: ${(d.threshold*100).toFixed(0)}%; kandidata posle izvornih filtera: ${d.pool}; audio uporedjeno: ${d.compared}.</p>
+  ${d.current_error ? '<p>' + esc(d.current_error) + '</p>' : `<p>Trenutna pesma, audio: ${d.current_audio.bpm} BPM; periodicnost ${d.current_audio.periodicity}; stabilnost ${d.current_audio.consistency}; promenljiv tempo: ${d.current_audio.variable_tempo_suspected ? 'sumnja' : 'ne'}.</p>`}
+  ${Object.entries(d.counts || {}).map(([k,v]) => `<div>${esc(k)}: ${v}</div>`).join('')}
+  ${d.top.length ? '<p>Najblizi u ovom skupu:</p>' + d.top.map(t => `<div>${name(t)} — ${t.score.toFixed(2)}%: ${t.accepted ? 'prolazi audio uslove' : esc(t.reasons.join('; '))}</div>`).join('') : ''}</details>`;
+}
+
+async function audioLoadSources(preferred) {
+  const q = $('#audioQuery')?.value || '';
+  const rows = await api('/api/audio/tracks?q=' + encodeURIComponent(q));
+  const id = Number(preferred || $('#audioSource')?.value || state.audioSource || 0);
+  if (id && !rows.some(t => t.id === id)) {
+    const track = await api('/api/track/' + id);
+    if (track) rows.unshift(track);
+  }
+  $('#audioSource').innerHTML = rows.map(t => `<option value="${t.id}" ${t.id === id ? 'selected' : ''}>${name(t)}</option>`).join('');
+  if (!rows.length) $('#audioResults').textContent = 'Nema skeniranih pesama za tu pretragu.';
+}
+
+async function audioLoadMatches() {
+  const id = +$('#audioSource').value;
+  if (!id) return;
+  const cutoff = +$('#audioThresholdNumber').value / 100;
+  $('#audioResults').textContent = 'Poredim sacuvane audio obrasce...';
+  state.audioSource = id;
+  const d = await api(`/api/audio/matches?track_id=${id}&threshold=${cutoff}`);
+  if (state.page !== 'audio' || +$('#audioSource').value !== id) return;
+  state.audioReport = d;
+  $('#audioResults').innerHTML = `<h3>${name(d.current)}</h3><p>${esc(d.scope)}</p>
+  <p>Prag pregleda: ${(d.threshold*100).toFixed(0)}%; sacuvani prag preporuka: ${(d.saved_threshold*100).toFixed(0)}%. Uporedjeno: ${d.compared}/${d.pool}; audio uslove prolazi: <b>${d.accepted_total}</b>.</p>
+  ${d.current_error ? '<p>' + esc(d.current_error) + '</p>' : ''}
+  <button data-act="audiocopyreport">Kopiraj audio izvestaj</button>
+  ${audioDiagnosticHtml(d.recommendation)}
+  <h3>Pronadjena audio poklapanja pri ovom pragu</h3>
+  ${d.accepted_items.length ? d.accepted_items.map(t => `<div>${name(t)} — <b>${t.score.toFixed(2)}%</b></div>`).join('') : '<p>Nema rezultata koji prolaze sve audio uslove.</p>'}
+  <h3>Najblizi rezultati i razlozi odbacivanja</h3><p>Do 50 najblizih audio rezultata. Odbaceni su vidljivi radi provere, ali nisu automatski predlozi.</p>
+  <div style="overflow-x:auto"><table><thead><tr><th>Pesma</th><th>Audio slicnost</th><th>Obrazac udaraca</th><th>Audio BPM</th><th>Razlika tempa</th><th>Nalaz</th></tr></thead><tbody>
+  ${d.items.map(t => `<tr><td>${name(t)}</td><td><b>${t.score.toFixed(2)}%</b></td><td>${t.groove.toFixed(2)}%</td><td>${t.audio.bpm}</td><td>${t.tempo_delta.toFixed(2)}%</td><td>${t.accepted ? '<span class="badge ok">PROLAZI AUDIO USLOVE</span>' : esc(t.reasons.join('; '))}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+document.addEventListener('input', e => {
+  if (e.target.id === 'audioThresholdRange') $('#audioThresholdNumber').value = e.target.value;
+  if (e.target.id === 'audioThresholdNumber') $('#audioThresholdRange').value = e.target.value;
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.id === 'audioQuery') guard(audioLoadSources)();
+});
+
 pages.grids = async () => {
   const d = await api('/api/grids');
   $('#main').innerHTML = `<h2>Fleksibilni beatgridovi</h2>
