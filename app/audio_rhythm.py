@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -13,6 +14,13 @@ MIN_SIMILARITY = 0.97  # heuristic similarity, never a probability
 
 
 def decoder():
+    if getattr(sys, 'frozen', False):
+        import imageio_ffmpeg
+        binaries = Path(imageio_ffmpeg.__file__).resolve().parent / 'binaries'
+        matches = sorted(binaries.glob('ffmpeg*.exe'))
+        if not matches:
+            raise RuntimeError('U EXE paketu nedostaje ugradjeni FFmpeg dekoder.')
+        return str(matches[0])
     found = shutil.which('ffmpeg')
     if found:
         return found
