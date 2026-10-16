@@ -159,23 +159,25 @@ async function loadSuggest(n) {
     $('#cur').innerHTML = `<div class="m-cur">▶ ${name(c)} <span class="mut">${meta(c)}</span></div>`;
     $('#sug').innerHTML = d.items.map((t, i) => `<div class="m-row" data-act="use" data-id="${t.id}"><b>${i + 1}.</b> ${name(t)}
       <span class="mut">${meta(t)} · ${t.audio_match ? 'AUDIO RITAM' : t.label === 'siguran izbor' ? 'sigurno' : 'iznenadjenje'}</span>
-      <div class="m-why">${esc(t.why[0] || '')}</div></div>`).join('') || '<div class="mut">Nema predloga.</div>';
+      <div class="m-why">${esc(t.why[0] || '')}</div><div class="row"><button class="sm" data-act="copysong" data-id="${t.id}">Copy Song</button><button class="sm" data-act="dragsong" data-id="${t.id}">Prevuci</button><button class="sm" data-act="reveal" data-id="${t.id}">Explorer</button></div></div>`).join('') || '<div class="mut">Nema predloga.</div>';
     return;
   }
   const notes = [];
   if (d.audio_status) notes.push(esc(d.audio_status) + ' Zadrzan je izvorni predlog.');
   if (d.blocked_history && d.blocked_history.length) notes.push('Iz tvojih lista preskoceno zbog stila: ' + d.blocked_history.map(esc).join('; '));
   if (d.relaxed && d.relaxed.length) notes.push('Premalo pesama u istom stilu, opusten filter: ' + d.relaxed.join(', '));
-  $('#cur').innerHTML = `<div class="card cur" draggable="true" data-drag="${c.id}"><div class="mut small">TRENUTNA (${esc(src || '')}) &middot; stil: ${esc(c.style_label)}</div>
+  $('#cur').innerHTML = `<div class="card cur"><div class="mut small">TRENUTNA (${esc(src || '')}) &middot; stil: ${esc(c.style_label)}</div>
     <div class="big">${name(c)}</div>${badges(c)}</div>`;
   $('#sug').innerHTML = audioDiagnosticHtml(d.audio_diagnostics) + (notes.length ? `<div class="small mut">${notes.join('<br>')}</div>` : '') + '<h3>Sledecih 5</h3><div class="grid">' + d.items.map(t => `
-    <div class="card" draggable="true" data-drag="${t.id}">
+    <div class="card">
       <div><span class="badge ${t.label === 'siguran izbor' ? 'ok' : 'acc'}">${t.label}</span><b style="float:right">${t.score}</b></div>
       <div class="big" style="font-size:20px">${name(t)}</div>${badges(t)}
       <div class="bar"><i style="width:${Math.min(100, t.score)}%"></i></div>
       <ul class="why">${t.why.map(w => `<li>${esc(w)}</li>`).join('')}</ul>
       ${t.note ? `<div class="small" style="color:var(--acc)">Beleska: ${esc(t.note)}</div>` : ''}
       <div class="row"><button class="sm pri" data-act="use" data-id="${t.id}">Pusteno / trenutna</button>
+      <button class="sm" data-act="copysong" data-id="${t.id}">Copy Song</button>
+      <button class="sm" data-act="dragsong" data-id="${t.id}">Prevuci u Traktor</button>
       <button class="sm" data-act="copy" data-id="${t.id}">Kopiraj putanju</button>
       <button class="sm" data-act="reveal" data-id="${t.id}">Explorer</button></div></div>`).join('') + '</div>' +
     (d.items.length ? '' : '<p class="mut">Nema predloga. Ucitaj biblioteku u Podesavanjima.</p>');
@@ -421,7 +423,9 @@ const actions = {
   mode: async el => { state.mode = el.dataset.m; state._drawModes(); if (state.curId) await loadSuggest(await api('/api/now')); },
   strict: async el => { state.strict = el.dataset.m; state._drawModes(); await api('/api/settings', {style_strictness: state.strict}); if (state.curId) await loadSuggest(await api('/api/now')); },
   use: async el => { await api('/api/now', {track_id: +el.dataset.id}); state.curId = null; closeModal(); if (state.page === 'sada') await tickNow(false); else toast('Postavljeno kao trenutna'); },
-  copy: async el => { const t = await api('/api/track/' + el.dataset.id); await navigator.clipboard.writeText(t.path); toast('Putanja kopirana'); },
+  copy: async el => { const t = await api('/api/track-path/' + el.dataset.id); await navigator.clipboard.writeText(t.path); toast('Proverena putanja kopirana'); },
+  copysong: async el => { await api('/api/copy-song/' + el.dataset.id, {}); toast('Audio fajl kopiran — ne samo putanja'); },
+  dragsong: async el => { await api('/api/drag-song/' + el.dataset.id, {}); toast('Drzi naziv u otvorenom prozoru i prevuci ga u zaustavljeni Traktor deck'); },
   reveal: async el => { await api('/api/reveal/' + el.dataset.id, {}); },
   rate: async el => { await sendRating(el.dataset.id, +el.dataset.r); state.playedSig = ''; if (el.dataset.reload) go('eve'); else await tickNow(false); },
   closemodal: () => closeModal(),
@@ -539,11 +543,6 @@ document.addEventListener('change', e => {
   const el = e.target;
   if (el.tagName === 'INPUT' && el.type === 'checkbox' && el.dataset.act) { const fn = actions[el.dataset.act]; if (fn) guard(fn)(el, e); }
 });
-document.addEventListener('dragstart', e => {
-  const d = e.target.closest('[data-drag]'); if (!d) return;
-  const id = d.dataset.drag;
-  e.dataTransfer.setData('DownloadURL', `audio/mpeg:track.mp3:${location.origin}/api/file/${id}`);
-});
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && state.page === 'lib' && e.target.id && e.target.id.startsWith('l')) actions.libgo(); });
 
@@ -612,7 +611,7 @@ async function audioLoadMatches() {
   ${d.accepted_items.length ? d.accepted_items.map(t => `<div>${name(t)} — <b>${t.score.toFixed(2)}%</b></div>`).join('') : '<p>Nema rezultata koji prolaze sve audio uslove.</p>'}
   <h3>Najblizi rezultati i razlozi odbacivanja</h3><p>Do 50 najblizih audio rezultata. Odbaceni su vidljivi radi provere, ali nisu automatski predlozi.</p>
   <div style="overflow-x:auto"><table><thead><tr><th>Pesma</th><th>Audio slicnost</th><th>Obrazac udaraca</th><th>Audio BPM</th><th>Razlika tempa</th><th>Nalaz</th></tr></thead><tbody>
-  ${d.items.map(t => `<tr><td>${name(t)}</td><td><b>${t.score.toFixed(2)}%</b></td><td>${t.groove.toFixed(2)}%</td><td>${t.audio.bpm}</td><td>${t.tempo_delta.toFixed(2)}%</td><td>${t.accepted ? '<span class="badge ok">PROLAZI AUDIO USLOVE</span>' : esc(t.reasons.join('; '))}</td></tr>`).join('')}</tbody></table></div>`;
+  ${d.items.map(t => `<tr><td>${name(t)}<div class="row"><button class="sm" data-act="copysong" data-id="${t.id}">Copy Song</button><button class="sm" data-act="dragsong" data-id="${t.id}">Prevuci</button><button class="sm" data-act="reveal" data-id="${t.id}">Explorer</button></div></td><td><b>${t.score.toFixed(2)}%</b></td><td>${t.groove.toFixed(2)}%</td><td>${t.audio.bpm}</td><td>${t.tempo_delta.toFixed(2)}%</td><td>${t.accepted ? '<span class="badge ok">PROLAZI AUDIO USLOVE</span>' : esc(t.reasons.join('; '))}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
 document.addEventListener('input', e => {

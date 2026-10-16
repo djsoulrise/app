@@ -14,7 +14,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
+from . import native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
 from .config import DATA, SETTINGS
 from .keys import key_score
 from .names import norm
@@ -222,21 +222,60 @@ def bulk_tag(body: dict = Body(...)):
     return {"ok": True}
 
 
-@app.post("/api/reveal/{tid}")
+def local_track_file(tid: int, request: Request):
+    if not _local(request) or sys.platform != 'win32':
+        raise HTTPException(400, 'Opcija radi samo na Windows DJ racunaru.')
+    try:
+        return native_files.resolve_track_path(tid)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.get('/api/track-path/{tid}')
+def track_path(tid: int, request: Request):
+    return {'path': local_track_file(tid, request)}
+
+
+@app.post('/api/reveal/{tid}')
 def reveal(tid: int, request: Request):
-    t = db.one("SELECT path FROM tracks WHERE id=?", (tid,))
-    if not t or not _local(request) or sys.platform != "win32":
-        raise HTTPException(400, "Moguce samo sa DJ racunara na Windowsu.")
-    subprocess.Popen(["explorer", f"/select,{os.path.normpath(t['path'])}"])
-    return {"ok": True}
+    path = local_track_file(tid, request)
+    try:
+        native_files.reveal_file(path)
+    except OSError as exc:
+        raise HTTPException(400, str(exc))
+    return {'ok': True, 'path': path}
 
 
-@app.get("/api/file/{tid}")
+@app.post('/api/copy-song/{tid}')
+def copy_song(tid: int, request: Request):
+    path = local_track_file(tid, request)
+    try:
+        native_files.copy_song(path)
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc))
+    return {'ok': True, 'path': path}
+
+
+@app.post('/api/drag-song/{tid}')
+def drag_song(tid: int, request: Request):
+    path = local_track_file(tid, request)
+    try:
+        native_files.drag_song(path)
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc))
+    return {'ok': True, 'path': path}
+
+
+@app.get('/api/file/{tid}')
 def file(tid: int, request: Request):
-    t = db.one("SELECT path FROM tracks WHERE id=?", (tid,))
-    if not t or not _local(request) or not os.path.isfile(t["path"]):
+    t = db.one('SELECT path FROM tracks WHERE id=?', (tid,))
+    if not _local(request) or not t:
         raise HTTPException(404)
-    return FileResponse(t["path"])
+    try:
+        path = native_files.resolve_track_path(tid)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(404, str(exc))
+    return FileResponse(path, filename=os.path.basename(path))
 
 
 # ---------- tags ----------

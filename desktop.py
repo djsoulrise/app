@@ -37,8 +37,10 @@ def main() -> None:
         from app.main import STATIC
         assert (Path(STATIC) / 'index.html').is_file()
         audio_rhythm.init()
+        from app import native_files
+        assert native_files.verify_drag_payload(r'C:\Music\Niš, Žurka & song.flac')
         report = sys.argv[sys.argv.index('--build-self-test') + 1]
-        Path(report).write_text(json.dumps({'ok': True, 'frozen': bool(getattr(sys, 'frozen', False)),
+        Path(report).write_text(json.dumps({'ok': True, 'native_file_drop': True, 'frozen': bool(getattr(sys, 'frozen', False)),
                                            'decoder_in_bundle': str(Path(decoder).resolve()).startswith(str(Path(sys._MEIPASS).resolve()))}), encoding='utf-8')
         return
     port = int(SETTINGS["port"])
@@ -57,7 +59,7 @@ def main() -> None:
     if not _wait_port(port):
         print(f"Server nije pokrenut (port {port} je mozda zauzet).")
         sys.exit(1)
-    webview.create_window("DJ asistent — Audio 2", f"http://127.0.0.1:{port}", width=1400, height=900, min_size=(900, 600))
+    webview.create_window("DJ asistent — Audio 3", f"http://127.0.0.1:{port}", width=1400, height=900, min_size=(900, 600))
     webview.start()
     server.should_exit = True
 

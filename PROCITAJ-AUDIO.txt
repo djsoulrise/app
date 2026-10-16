@@ -92,3 +92,22 @@ AUDIO 2 — LISTA SLICNIH PESAMA I PODESIV PRAG
 - Kopiraj audio izvestaj kopira tekst za dijagnostiku; nista se ne salje samo.
 - Analizator i format skena ostaju VERSION 1: postojeca baza se ponovo koristi.
 - Skor 97% nije 97% verovatnoce; nizi prag nije garancija istog ritma.
+
+
+AUDIO 3 — EXPLORER, COPY SONG I WINDOWS PREVLACENJE
+- Explorer sada proverava stvarni fajl i koristi Windows Shell za oznacavanje.
+  Razmaci, zapete i Unicode znakovi se ne salju kao komandni argumenti.
+- Ako stara putanja ne postoji, trazi se samo tacno isti naziv fajla u
+  muzickim folderima. Ako postoji vise kopija, izbor se ne pogadja.
+- Copy Song kopira pravi fajl (Windows FileDrop), a Kopiraj putanju kopira
+  proverenu tekstualnu putanju. Copy Song ne duplira muziku na disku.
+  Da li Ctrl+V radi u Traktoru zavisi od ciljnog programa; Windows Explorer
+  podrzava lepljenje kopiranih fajlova.
+- Prevuci u Traktor otvara mali Windows prozor sa nazivom stvarnog fajla.
+  Drzi levi klik na nazivu i prevuci ga u deck koji si ti zaustavio.
+  Prenos dozvoljava samo COPY; ne pomera niti brise muziku.
+- Aplikacija ne cita stanje deckova i ne moze da potvrdi da li neki deck
+  trenutno radi. Ne bira cilj, ne salje load/play/hotkey/MIDI komande i ne
+  oslanja se na polozaj prozora. Traktorov load lock ostaje tvoja dodatna zastita.
+- Prethodni DownloadURL prevlacenje (web-link track.mp3) uklonjeno je.
+- Baza, prag slicnosti i prethodni audio sken ostaju sacuvani.
