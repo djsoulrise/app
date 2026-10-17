@@ -44,8 +44,16 @@ function compare(request){
  }
  return out;
 }
-try{
- const input=JSON.parse(fs.readFileSync(0,'utf8'));
+function handle(input){
  const result=input.operation==='extract'?extract(input.path,input.decoder):input.operation==='compare'?compare(input):{ok:true,engine:'Essentia.js 0.1.3',pid:process.pid};
- process.stdout.write(JSON.stringify({ok:true,result}));
-}catch(err){process.stdout.write(JSON.stringify({ok:false,error:String(err.message).slice(0,600)}));process.exitCode=1;}
+ return {ok:true,result};
+}
+function reply(text){try{return JSON.stringify(handle(JSON.parse(text)));}catch(err){return JSON.stringify({ok:false,error:String(err.message).slice(0,600)});}}
+if(process.argv.includes('--persistent')){
+ const readline=require('readline');
+ const input=readline.createInterface({input:process.stdin,crlfDelay:Infinity});
+ input.on('line',line=>{process.stdout.write(reply(line)+'\n');});
+}else{
+ const output=reply(fs.readFileSync(0,'utf8'));process.stdout.write(output);
+ if(!JSON.parse(output).ok)process.exitCode=1;
+}

@@ -44,3 +44,13 @@ def test_stop_and_threshold_controls():
     assert matcher.decision(m)==[]
     m['tonal']['contrast']=2;assert matcher.decision(m)==['tonal']
     m['tonal']['seconds']=2;assert matcher.decision(m)==[]
+
+
+def test_sequence_worker_reuse_is_real_and_bounded():
+    first=features.run_engine({'operation':'probe'},persistent=True)
+    second=features.run_engine({'operation':'probe'},persistent=True)
+    assert first['pid']==second['pid']
+    features.close_workers()
+    third=features.run_engine({'operation':'probe'},persistent=True)
+    assert third['pid']!=first['pid']
+    features.close_workers()

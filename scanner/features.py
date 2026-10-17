@@ -23,7 +23,67 @@ def decoder():
     return path
 
 
-def run_engine(payload,timeout=120,stop=None):
+import threading,queue,atexit
+_WORKERS={};_WORKER_LOCK=threading.Lock()
+
+
+def kill_process(process):
+    if process.poll() is None:
+        if os.name=='nt':subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        else:process.kill()
+        process.wait()
+
+
+class SequenceWorker:
+    def __init__(self):
+        self.process=subprocess.Popen([node_path(),str(ROOT/'engine.cjs'),'--persistent'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+            creationflags=(getattr(subprocess,'CREATE_NO_WINDOW',0)|(0 if os.environ.get('DJ_SCANNER_TURBO')=='1' else getattr(subprocess,'BELOW_NORMAL_PRIORITY_CLASS',0))))
+        self.answers=queue.Queue()
+        def read():
+            try:
+                for line in iter(self.process.stdout.readline,b''):self.answers.put(line)
+            finally:self.answers.put(None)
+        threading.Thread(target=read,daemon=True).start()
+
+    def call(self,payload,timeout,stop):
+        import time
+        start=time.monotonic()
+        if stop is not None and stop.is_set():raise InterruptedError('Zaustavljeno')
+        self.process.stdin.write(json.dumps(payload,separators=(',',':')).encode()+b'\n');self.process.stdin.flush()
+        while True:
+            if stop is not None and stop.is_set():raise InterruptedError('Zaustavljeno')
+            if time.monotonic()-start>timeout:raise TimeoutError('Audio poredjenje je prekoracilo limit.')
+            try:line=self.answers.get(timeout=.1)
+            except queue.Empty:continue
+            if line is None:raise RuntimeError('Audio radnik je neocekivano ugasen.')
+            result=json.loads(line)
+            if not result.get('ok'):raise ValueError(result.get('error','Poredjenje nije uspelo.'))
+            return result['result']
+
+
+def close_workers():
+    with _WORKER_LOCK:
+        workers=list(_WORKERS.values());_WORKERS.clear()
+    for worker in workers:kill_process(worker.process)
+
+atexit.register(close_workers)
+
+
+def persistent_engine(payload,timeout,stop):
+    identity=threading.get_ident()
+    with _WORKER_LOCK:
+        worker=_WORKERS.get(identity)
+        if worker is None or worker.process.poll() is not None:worker=SequenceWorker();_WORKERS[identity]=worker
+    try:return worker.call(payload,timeout,stop)
+    except BaseException:
+        kill_process(worker.process)
+        with _WORKER_LOCK:_WORKERS.pop(identity,None)
+        raise
+
+
+def run_engine(payload,timeout=120,stop=None,persistent=None):
+    if persistent is True or (persistent is None and payload.get("operation")=="compare"):
+        return persistent_engine(payload,timeout,stop)
     process=subprocess.Popen([node_path(),str(ROOT/'engine.cjs')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
         creationflags=(getattr(subprocess,'CREATE_NO_WINDOW',0)|(0 if os.environ.get('DJ_SCANNER_TURBO')=='1' else getattr(subprocess,'BELOW_NORMAL_PRIORITY_CLASS',0))))
     import time

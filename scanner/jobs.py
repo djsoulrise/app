@@ -34,7 +34,7 @@ def start(name,fn):
         except Exception as exc:
             STATE['error']=str(exc);STATE['phase']='Greska: '+str(exc)
             (storage.DATA/'last-error.txt').write_text(traceback.format_exc(),encoding='utf-8')
-        finally:STATE.update(running=False,active={},paused=False);PAUSE.clear()
+        finally:features.close_workers();STATE.update(running=False,active={},paused=False);PAUSE.clear()
     STATE.pop('error',None);threading.Thread(target=run,daemon=True).start();return {'started':True}
 
 
@@ -53,7 +53,7 @@ def execute(tasks,fn,count):
     with ThreadPoolExecutor(max_workers=min(count,max(1,len(tasks)))) as pool:
         def submit(item):
             def work():
-                ident=str(threading.get_ident());STATE['active'][ident]=str(item[0] if isinstance(item,tuple) else item)
+                ident=str(threading.get_ident());STATE['active'][ident]=fn.label(item) if hasattr(fn,'label') else str(item[0] if isinstance(item,tuple) else item)
                 try:return fn(item)
                 finally:STATE['active'].pop(ident,None)
             futures[pool.submit(work)]=item
@@ -113,6 +113,7 @@ def scan(roots,worker_count=None,turbo=False,retry=False):
             try:return features.extract(path,STOP)
             except RuntimeError as exc:
                 if attempt or 'neocekivano ugasen' not in str(exc):raise
+    calculate.label=lambda path:Path(path).name
     for path,result,error in execute(tasks,calculate,count):
         if error is None:
             try:storage.save(result);ok+=1
@@ -134,12 +135,16 @@ def match(worker_count=None,turbo=False,thorough=False):
     for i,identity in enumerate(records):
         check();STATE.update(done=i,total=len(records))
         for other in index.candidates(identity,100 if thorough else 40):candidates.add(tuple(sorted((identity,other))))
-    tasks=sorted(candidates-existing);STATE['phase']='Proveravam muzicke parove';STATE['started']=time.time();accepted=0
+    tasks=sorted(candidates-existing);STATE['phase']='Proveravam muzicke parove';STATE['started']=time.time();accepted=0;compared=0;failed=0
+    labels={row['hash']:Path(row['path']).name for row in storage.rows("SELECT hash,path FROM files WHERE status='ok'")}
     def compare(pair):return matcher.compare_records(records[pair[0]],records[pair[1]],STOP)
+    compare.label=lambda pair:labels.get(pair[0],pair[0])+' / '+labels.get(pair[1],pair[1])
     for pair,result,error in execute(tasks,compare,workers(worker_count,turbo)):
         if error:
+            failed+=1
             STATE['errors'].append({'path':' / '.join(pair),'error':str(error)});STATE['errors']=STATE['errors'][-200:];continue
         with storage.connect() as c:c.execute('INSERT OR REPLACE INTO pairs VALUES(?,?,?,?)',(*pair,ENGINE,json.dumps(result)))
-        accepted+=bool(matcher.decision(result))
+        compared+=1;accepted+=bool(matcher.decision(result))
+    features.close_workers()
     STATE['phase']='Provera parova zavrsena'
-    return {'compared':len(tasks),'accepted':accepted,'candidates':len(candidates),'approximate':len(records)>100}
+    return {'compared':compared,'failed':failed,'requested':len(tasks),'accepted':accepted,'candidates':len(candidates),'approximate':len(records)>100}

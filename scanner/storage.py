@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT);
 CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
 '''
 
-from contextlib import contextmanager
+from contextlib import contextmanager,closing
 
 @contextmanager
 def connect():
@@ -79,7 +79,7 @@ def export(path,full=False,thresholds=None):
             if full:
                 with tempfile.TemporaryDirectory() as folder:
                     backup=Path(folder)/'scanner.db'
-                    with connect() as source,sqlite3.connect(backup) as destination:source.backup(destination)
+                    with connect() as source,closing(sqlite3.connect(backup)) as destination:source.backup(destination)
                     z.write(backup,'scanner.db')
         os.replace(temp,path)
     finally:temp.unlink(missing_ok=True)

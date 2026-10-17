@@ -79,11 +79,17 @@ def export(kind:str):
     from datetime import datetime
     folder=storage.DATA/'Exports';folder.mkdir(exist_ok=True);base=folder/('DJ-Miljan-'+datetime.now().strftime('%Y%m%d-%H%M%S'))
     if kind=='csv':
-        path=base.with_suffix('.csv')
+        base.mkdir(exist_ok=True)
+        path=base/'skenirano.csv'
         with path.open('w',encoding='utf-8-sig',newline='') as f:
             writer=csv.writer(f);writer.writerow(['path','status','error','hash','seconds'])
             for r in storage.rows('SELECT * FROM files ORDER BY path'):writer.writerow([r['path'],r['status'],r['error'],r['hash'],r['seconds']])
-        return {'path':str(path)}
+        names={r['hash']:r['path'] for r in storage.rows("SELECT hash,path FROM files WHERE status='ok'")}
+        with (base/'parovi.csv').open('w',encoding='utf-8-sig',newline='') as f:
+            writer=csv.writer(f);writer.writerow(['A','B','tonal','rhythm','sample','accepted'])
+            for r in storage.rows('SELECT * FROM pairs WHERE engine=?',(ENGINE,)):
+                metrics=json.loads(r['metrics']);writer.writerow([names.get(r['a'],r['a']),names.get(r['b'],r['b']),*[metrics.get(k,{}).get('score') for k in ('tonal','rhythm','sample')],'+'.join(matcher.decision(metrics,SETTINGS.get('thresholds')))])
+        return {'path':str(base)}
     path=base.with_suffix('.djscan' if kind=='full' else '.djmatches')
     return storage.export(path,kind=='full',SETTINGS.get('thresholds'))
 
