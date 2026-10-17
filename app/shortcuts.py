@@ -257,9 +257,10 @@ class Manager:
 
 
 class WindowsWindow:
-    def __init__(self,title):
+    def __init__(self,title,desktop_window):
         import ctypes
         from ctypes import wintypes
+        self.desktop=desktop_window
         self.wintypes=wintypes
         self.ctypes=ctypes;self.user=ctypes.WinDLL('user32');self.title=title;self.previous=None
         self.user.FindWindowW.argtypes=[wintypes.LPCWSTR,wintypes.LPCWSTR];self.user.FindWindowW.restype=wintypes.HWND
@@ -300,14 +301,19 @@ class WindowsWindow:
         if not own: return
         foreground=self.user.GetForegroundWindow()
         if foreground!=own: self.previous=foreground
-        self.user.ShowWindow(own,9)
+        # WinForms must own state transitions so the WebView child is restored too.
+        if self.user.IsIconic(own):
+            self.desktop.restore()
+        self.desktop.show()
         self.user.SetForegroundWindow(own)
+        from .window_surface import refresh
+        refresh(self.desktop)
 
     def toggle(self):
         own=self.own()
         if not own: return
         if self.user.GetForegroundWindow()==own and not self.user.IsIconic(own):
-            self.user.ShowWindow(own,6)
+            self.desktop.minimize()
             if self.previous and self.user.IsWindow(self.previous): self.user.SetForegroundWindow(self.previous)
         else: self.show()
 
@@ -323,3 +329,4 @@ def verify_hotkey_support():
 
 
 manager=Manager()
+

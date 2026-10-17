@@ -1,3 +1,18 @@
+NOVO: Poredjenje refrena (u zupcaniku) — izaberi dve pesme i vreme pocetka/kraja refrena, 12–60 sekundi.
+Odvojeno se mere ritam i tonalni sled sa lokalnim vremenskim poravnanjem i pomakom tonaliteta.
+Pragovi su podesivi. Tonalni uslov trazi i dovoljno dugo, promenljivo tonalno poklapanje.
+Ovaj dodatak poredi samo izabrana dva refrena, ne pretrazuje automatski celu biblioteku i ne menja peti predlog/LIVE.
+Nema potrebe za ponovnim skeniranjem cele biblioteke.
+
+DJ MILJAN ASSISTANT — AUDIO 7
+
+Ctrl+X koristi WebView restore/show na GUI thread-u i obnavlja crtanje sadrzaja prozora.
+Podesavanja → Velicina teksta: Ctrl + tockic, klizac 75–160%, A− / A+.
+Pocetni tekst je veci (115%). Promena se pamti i moze da se iskljuci.
+Prozor, zaglavlje i EXE sada nose naziv DJ Miljan Assistant.
+Podaci ostaju u postojecem DJ asistent folderu da bi baza i sken ostali dostupni.
+Zatvori prethodnu verziju pre pokretanja novog EXE-a.
+
 AUDIO 6 — KOMPAKTNA KONZOLA
 
 Ctrl+X: globalno prikazi / minimizuj, ostaje dostupan i kada Traktor nije prepoznat.
@@ -153,3 +168,4 @@ AUDIO 4 — LIVE 10 I START / STOP
 - Audio promenljiv tempo je samo sumnja. Aplikacija ne menja Traktor
   kolekciju niti beatgridove. Vec sacuvana NML provera ostaje ako je nova
   provera prekinuta pre zavrsetka.
+

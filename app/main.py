@@ -15,7 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import shortcuts, native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
+from . import chorus, shortcuts, native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
 from .config import DATA, SETTINGS
 from .scan_control import ScanCancelled
 from .keys import key_score
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="DJ asistent", lifespan=lifespan)
+app = FastAPI(title="DJ Miljan Assistant", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -966,3 +966,45 @@ def shortcut_change(operation: str, request: Request, body: dict = Body(...)):
         return m.status()
     except (ValueError, TypeError, KeyError) as exc:
         raise HTTPException(400, str(exc))
+
+
+
+@app.get('/api/ui-preferences')
+def ui_preferences(request: Request):
+    _shortcut_local(request)
+    saved = SETTINGS.get('ui_preferences') or {}
+    return {'font_scale': saved.get('font_scale', 115),
+            'ctrl_wheel_text': saved.get('ctrl_wheel_text', True)}
+
+
+@app.post('/api/ui-preferences')
+def save_ui_preferences(request: Request, body: dict = Body(...)):
+    _shortcut_local(request)
+    current = ui_preferences(request)
+    scale = body.get('font_scale', current['font_scale'])
+    enabled = body.get('ctrl_wheel_text', current['ctrl_wheel_text'])
+    if type(scale) is not int or not 75 <= scale <= 160 or scale % 5 or type(enabled) is not bool:
+        raise HTTPException(400, 'Velicina teksta mora biti 75–160%, u koracima od 5%.')
+    SETTINGS['ui_preferences'] = {'font_scale': scale, 'ctrl_wheel_text': enabled}
+    config.save(SETTINGS)
+    return SETTINGS['ui_preferences']
+
+
+@app.get('/api/chorus/status')
+def chorus_status(request: Request):
+    _shortcut_local(request)
+    return {'result': chorus.LAST}
+
+
+@app.post('/api/chorus/compare')
+def chorus_compare(request: Request, body: dict = Body(...)):
+    _shortcut_local(request)
+    try:
+        for side in ('a','b'):
+            int(body[side])
+            chorus.bounds(body[side+'_start'],body[side+'_end'])
+        for key,default in (('rhythm_cutoff',90),('tonal_cutoff',85)):
+            if not 50 <= float(body.get(key,default)) <= 100: raise ValueError('Prag mora biti od 50 do 100%.')
+    except (ValueError,TypeError,KeyError) as exc:
+        raise HTTPException(400,str(exc))
+    return start_job('Poredjenje odabranih refrena',lambda:chorus.compare_pair(body,_progress,JOB_STOP),kind='chorus',cancellable=True)

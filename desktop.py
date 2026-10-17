@@ -38,6 +38,10 @@ def _window_bounds():
 
 
 def main() -> None:
+    if '--window-restore-self-test' in sys.argv:
+        from app.restore_smoke import run
+        run(sys.argv[sys.argv.index('--window-restore-self-test') + 1])
+        return
     if '--build-self-test' in sys.argv:
         import json
         import os
@@ -69,20 +73,22 @@ def main() -> None:
     if occupied:
         import ctypes
         ctypes.windll.user32.MessageBoxW(None,
-            f"Port {port} je vec zauzet. Zatvori prethodni DJ asistent pa ponovo pokreni ovaj EXE. Baza i audio sken ostaju sacuvani.",
-            "DJ asistent — prethodna verzija je jos otvorena", 0x30)
+            f"Port {port} je vec zauzet. Zatvori prethodni DJ Miljan Assistant pa ponovo pokreni ovaj EXE. Baza i audio sken ostaju sacuvani.",
+            "DJ Miljan Assistant — prethodna verzija je jos otvorena", 0x30)
         return
     server = uvicorn.Server(uvicorn.Config(app, host=SETTINGS["host"], port=port, log_level="warning"))
     threading.Thread(target=server.run, daemon=True).start()
     if not _wait_port(port):
         print(f"Server nije pokrenut (port {port} je mozda zauzet).")
         sys.exit(1)
-    title = "DJ asistent — Audio 6"
+    title = "DJ Miljan Assistant"
     from app.shortcuts import manager, WindowsWindow
     width, height, minimum = _window_bounds()
-    webview.create_window(title, f"http://127.0.0.1:{port}", width=width, height=height, min_size=minimum)
+    window = webview.create_window(title, f"http://127.0.0.1:{port}", width=width, height=height, min_size=minimum, background_color="#171918")
+    from app.window_surface import refresh
+    window.events.loaded += lambda: refresh(window)
     try:
-        webview.start(lambda: manager.start(WindowsWindow(title)))
+        webview.start(lambda: manager.start(WindowsWindow(title, window)))
     finally:
         manager.stop()
         server.should_exit = True
@@ -90,4 +96,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 

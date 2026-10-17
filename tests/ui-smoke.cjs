@@ -6,7 +6,8 @@ const {chromium}=require('playwright');
  const page=await browser.newPage({viewport:{width:1100,height:680}});
  let current=1,saved=.97,job={running:false},starts=[],stops=[];
  let shortcuts={actions:{toggle_window:'Prikazi / minimizuj Assistant',focus_search:'Fokus na pretragu',next_suggestion:'Sledeci predlog',copy_song:'Copy Song'},settings:{keyboard_enabled:true,keyboard:{toggle_window:{vk:88,modifiers:2,label:'Ctrl+X'}},midi:{}},sequence:0,connected:false};
- let midiLearns=[],events=[],fileCopies=[];
+ let midiLearns=[],events=[],fileCopies=[],settingsWrites=[],chorusBody=null,chorusResult=null,uiPrefs={font_scale:115,ctrl_wheel_text:true};
+ const settings={style_strictness:'normalno',music_folders:[],weights:{hist:3,key:1,bpm:1,vibe:1,energy:1,year:1,genre:1,feedback:1},audience:{},guest_limit:{count:2,minutes:30},broadcast_port:8000};
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const navigate=async p=>{const item=page.locator('#nav [data-p="'+p+'"]');if(!await item.isVisible())await page.locator('#settingsbtn').click();await item.click();};
  const track=id=>({id,artist:'Test Artist',title:'Track '+id,bpm:124,camelot:'10A',energy:6,fmt:'flac',tags:[],score:98,label:'AUDIO RITAM',why:['Test audio'],style:'{}'});
@@ -16,15 +17,19 @@ const {chromium}=require('playwright');
   const u=new URL(route.request().url());let body;
   if(u.pathname==='/')return route.fulfill({contentType:'text/html',body:fs.readFileSync('app/static/index.html','utf8')});
   if(u.pathname.startsWith('/static/'))return route.fulfill({contentType:u.pathname.endsWith('.css')?'text/css':'application/javascript',body:fs.readFileSync('app'+u.pathname,'utf8')});
-  if(u.pathname==='/api/shortcuts')body=shortcuts;
+  if(u.pathname==='/api/chorus/status')body={result:chorusResult};
+  else if(u.pathname==='/api/search')body=[track(1),track(2)];
+  else if(u.pathname==='/api/chorus/compare'){chorusBody=JSON.parse(route.request().postData());chorusResult={a:{...track(1),start:30,end:60},b:{...track(2),start:45,end:75},rhythm_score:94,bpm_a:120,bpm_b:124,rhythm_pass:true,tonal_pass:false,tonal:{tonal_score:70,coverage:50,pitch_shift:0,a_from:30,a_to:45,b_from:45,b_to:60},notes:[],disclaimer:'Test'};body={started:true};}
+  else if(u.pathname==='/api/ui-preferences'){if(route.request().method()==='POST')uiPrefs=JSON.parse(route.request().postData());body=uiPrefs;}
+  else if(u.pathname==='/api/shortcuts')body=shortcuts;
   else if(u.pathname==='/api/shortcuts/ports')body={ports:['DJ Assistant']};
   else if(u.pathname==='/api/shortcuts/events')body={events:events.filter(e=>e.sequence>+u.searchParams.get('after'))};
   else if(u.pathname==='/api/shortcuts/keyboard'){const d=JSON.parse(route.request().postData());if(d.binding)shortcuts.settings.keyboard[d.action]=d.binding;else delete shortcuts.settings.keyboard[d.action];body=shortcuts;}
   else if(u.pathname==='/api/shortcuts/midi/learn'){midiLearns.push(JSON.parse(route.request().postData()));body=shortcuts;}
   else if(u.pathname.startsWith('/api/shortcuts/'))body=shortcuts;
   else if(u.pathname.startsWith('/api/copy-song/')){fileCopies.push(+u.pathname.split('/').pop());body={ok:true};}
-  else if(u.pathname==='/api/status')body={counts:{n:3804},job,broadcast:{},event:null,audio_revision:0,audio_threshold:saved};
-  else if(u.pathname==='/api/settings')body={style_strictness:'normalno'};
+  else if(u.pathname==='/api/status')body={counts:{n:3804},job,broadcast:{},history:{},event:null,audio_revision:0,audio_threshold:saved};
+  else if(u.pathname==='/api/settings'){if(route.request().method()==='POST')settingsWrites.push(JSON.parse(route.request().postData()));body=settings;}
   else if(u.pathname==='/api/styles')body={};
   else if(u.pathname==='/api/now')body={track_id:current,track:track(current)};
   else if(u.pathname==='/api/suggest')body={current:track(current),items:Array.from({length:5},(_,i)=>track(i+3)),audio_diagnostics:diagnostic(current)};
@@ -94,7 +99,42 @@ const {chromium}=require('playwright');
  await page.waitForFunction(()=>document.querySelector('[data-shortcut-id="4"]').classList.contains('shortcut-selected'));
  await new Promise(resolve=>setTimeout(resolve,600));
  if(fileCopies.join(',')!=='4')throw Error('Copy must target selected suggestion exactly once: '+fileCopies);
+ await navigate('set');
+ await page.locator('#fontScaleRange').waitFor();
+ const before=await page.evaluate(()=>({font:parseFloat(getComputedStyle(document.body).fontSize),width:innerWidth,scale:fontScale}));
+ await page.keyboard.down('Control');await page.mouse.wheel(0,-100);await page.keyboard.up('Control');
+ await page.waitForFunction(()=>fontScale===120);
+ const after=await page.evaluate(()=>({font:parseFloat(getComputedStyle(document.body).fontSize),width:innerWidth}));
+ if(after.font<=before.font||after.width!==before.width)throw Error('Ctrl wheel must enlarge text without zooming viewport');
+ await page.locator('#ctrlWheelText').uncheck();
+ await page.keyboard.down('Control');await page.mouse.wheel(0,-100);await page.keyboard.up('Control');
+ await page.waitForTimeout(150);
+ if(await page.evaluate(()=>fontScale)!==120)throw Error('Disabled Ctrl wheel changed font');
+ await page.waitForTimeout(250);
+ await page.evaluate(()=>{localStorage.removeItem('djFontScale');localStorage.removeItem('djCtrlWheelText');});
+ await page.reload();await page.waitForFunction(()=>document.querySelectorAll('.recommendation').length===5 && fontScale===120 && ctrlWheelText===false);
+ if(await page.evaluate(()=>fontScale)!==120||await page.evaluate(()=>ctrlWheelText)!==false)throw Error('Font preferences did not persist');
+ await navigate('set');await page.locator('#ctrlWheelText').check();
+ await page.locator('[data-act="fontreset"]').click();
+ if(await page.locator('#fontScaleValue').textContent()!=='115%')throw Error('Font reset');
+ await page.locator('[data-act="saveset"]').first().click();
+ await page.waitForTimeout(150);
+ const savedWeights=settingsWrites.findLast(s=>s.weights);
+ if(!savedWeights||Object.keys(savedWeights.weights).some(k=>k==='ntScaleRange'))throw Error('Text slider contaminated ranking weights');
+ if(await page.title()!=='DJ Miljan Assistant')throw Error('App name');
+ await navigate('chorus');
+ for(const side of ['a','b']){
+  await page.locator('#chorusQuery_'+side).fill('Test');
+  await page.locator('[data-act="chorussearch"][data-side="'+side+'"]').click();
+  await page.locator('[data-act="choruspick"][data-side="'+side+'"][data-id="'+(side==='a'?1:2)+'"]').click();
+ }
+ await page.locator('#chorusStart_b').fill('0:45');await page.locator('#chorusEnd_b').fill('1:15');
+ await page.locator('[data-act="choruscompare"]').click();
+ await page.waitForFunction(()=>document.querySelector('#chorusResult').textContent.includes('PROLAZI RITAM'));
+ if(chorusBody.a_start!==30||chorusBody.b_start!==45||chorusBody.b_end!==75)throw Error('Wrong excerpt bounds');
+ if(chorusResult.tonal_pass!==false)throw Error('Rhythm and tonal conditions must be independent');
  if(errors.length)throw Error(errors.join('\n'));
  console.log('UI PASS: compact console 5+10 without scroll at 1100x680 and 940x610, menu, Start/Stop, keyboard+MIDI learn, selected file shortcuts');
  await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});
+

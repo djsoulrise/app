@@ -8,8 +8,39 @@ const state = {page: 'sada', curId: null, timer: null, lib: {q: '', view: '', ta
     : (localStorage.getItem('view') || (localStorage.getItem('mini') === '1' ? 'mini' : 'full')),
   fs: +localStorage.getItem('fs') || 22, tikIdx: 0, tikItems: [], tikCur: null, rot: null};
 state.mini = state.view !== 'full'; state.tiker = state.view === 'tiker';
-const applyFs = () => document.documentElement.style.setProperty('--mfs', state.fs + 'px');
+const applyFs = () => document.documentElement.style.setProperty('--mfs', 'calc('+state.fs+'px * var(--font-scale,1))');
 applyFs();
+
+// Text sizing changes typography, never the browser viewport or window dimensions.
+let fontScale = Math.max(75, Math.min(160, Number(localStorage.getItem('djFontScale')) || 115));
+let ctrlWheelText = localStorage.getItem('djCtrlWheelText') !== '0';
+let fontSaveTimer, fontPrefEdited = false;
+function saveFontPreferences() {
+  fontPrefEdited = true; clearTimeout(fontSaveTimer);
+  fontSaveTimer=setTimeout(()=>api('/api/ui-preferences',{font_scale:fontScale,ctrl_wheel_text:ctrlWheelText}).catch(e=>toast('Velicina nije sacuvana: '+e.message,true)),180);
+}
+function setFontScale(value,save=true) {
+  fontScale = Math.max(75, Math.min(160, Math.round(value/5)*5));
+  document.documentElement.style.setProperty('--font-scale',fontScale/100);
+  localStorage.setItem('djFontScale',String(fontScale));
+  if ($('#fontScaleRange')) $('#fontScaleRange').value=fontScale;
+  if ($('#fontScaleValue')) $('#fontScaleValue').textContent=fontScale+'%';
+  document.body?.classList.toggle('large-text',fontScale>120);
+  if(save)saveFontPreferences();
+}
+setFontScale(fontScale,false);
+api('/api/ui-preferences').then(p=>{
+  if(fontPrefEdited || !p || !Number.isInteger(p.font_scale))return;
+  ctrlWheelText=p.ctrl_wheel_text!==false;
+  localStorage.setItem('djCtrlWheelText',ctrlWheelText?'1':'0');
+  setFontScale(p.font_scale,false);
+}).catch(()=>{});
+document.addEventListener('wheel',e=>{
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  if (!ctrlWheelText || !e.deltaY) return;
+  setFontScale(fontScale + (e.deltaY<0 ? 5 : -5));
+},{passive:false});
 
 async function api(url, body, method) {
   const o = {};
@@ -48,7 +79,7 @@ function performanceBadges(t) {
 }
 
 // ---------- navigation ----------
-const PAGES = [['sada', 'Sada'], ['lib', 'Biblioteka'], ['tags', 'Tagovi'], ['dupes', 'Duplikati'], ['audio', 'Audio ritam'], ['grids', 'Fleksibilni gridovi'], ['pl', 'Plejliste'],
+const PAGES = [['sada', 'Sada'], ['lib', 'Biblioteka'], ['tags', 'Tagovi'], ['dupes', 'Duplikati'], ['audio', 'Audio ritam'], ['chorus', 'Poredjenje refrena'], ['grids', 'Fleksibilni gridovi'], ['pl', 'Plejliste'],
   ['eve', 'Vece'], ['req', 'Zahtevi'], ['ai', 'AI'], ['trend', 'Trendovi'], ['shortcuts', 'Precice'], ['set', 'Podesavanja']];
 function go(p) {
   if (state.keyLearn || (state.page === 'shortcuts' && p !== 'shortcuts')) cancelShortcutLearn();
@@ -411,6 +442,8 @@ pages.set = async () => {
   const s = await api('/api/settings'), st = await api('/api/status');
   const w = s.weights, W = {hist: 'Moje liste (history)', key: 'Key harmonija', bpm: 'BPM', vibe: 'Vajb (tagovi/pozicija)', energy: 'Energija', year: 'Godina', genre: 'Zanr', feedback: 'Ocene (palo/nije)'};
   $('#main').innerHTML = `<h2>Podesavanja</h2>
+    <div class="card"><h3>Velicina teksta</h3><label><input type="checkbox" id="ctrlWheelText" ${ctrlWheelText ? 'checked' : ''}> Ctrl + tockic misa povecava / smanjuje tekst u celoj aplikaciji</label>
+    <div class="row"><button data-act="fontsmaller">A−</button><input type="range" id="fontScaleRange" min="75" max="160" step="5" value="${fontScale}" aria-label="Velicina teksta"><b id="fontScaleValue">${fontScale}%</b><button data-act="fontlarger">A+</button><button data-act="fontreset">Pocetna velicina</button></div><p class="small mut">Ctrl + skrol gore: veci tekst. Ctrl + skrol dole: manji tekst. Promena se cuva odmah na ovom racunaru.</p></div>
     <div class="card"><h3>Biblioteka</h3>
       <label class="small mut">Muzicki folderi (jedan po redu)</label><textarea id="sfold">${esc(s.music_folders.join('\n'))}</textarea>
       <label class="small mut">Traktor collection.nml (samo se cita, radi se na kopiji)</label><input id="snml" value="${esc(s.nml_path)}" style="width:100%">
@@ -432,14 +465,16 @@ pages.set = async () => {
     <div class="card"><h3>Gosti</h3><div class="row"><label>Max zahteva</label><input id="glc" value="${s.guest_limit.count}" style="width:70px"><label>na minuta</label><input id="glm" value="${s.guest_limit.minutes}" style="width:70px"></div>
       <p class="mut small">PIN za tablet: <b>${esc(s.dj_pin)}</b> — otvori na tabletu http://IP:${s.port}/login?pin=PIN</p></div>
     <button class="pri" data-act="saveset">Sacuvaj sve</button>`;
-  $$('input[type=range]').forEach(r => r.addEventListener('input', () => $('#wv_' + r.id.slice(2)).textContent = r.value));
+  $$('input[id^=w_]').forEach(r => r.addEventListener('input', () => $('#wv_' + r.id.slice(2)).textContent = r.value));
+  $('#fontScaleRange').oninput=e=>setFontScale(+e.target.value);
+  $('#ctrlWheelText').onchange=e=>{ctrlWheelText=e.target.checked;localStorage.setItem('djCtrlWheelText',ctrlWheelText?'1':'0');saveFontPreferences();};
 };
 
 async function saveSettings() {
   const s = {
     music_folders: $('#sfold').value.split('\n').map(x => x.trim()).filter(Boolean), nml_path: $('#snml').value.trim(), history_dir: $('#shist').value.trim(),
     dupes_dir: $('#sdup').value.trim(), export_dir: $('#sexp').value.trim(), broadcast_port: +$('#sbp').value, broadcast_enabled: $('#sbe').checked, model: $('#smodel').value.trim(),
-    weights: Object.fromEntries($$('input[type=range]').map(r => [r.id.slice(2), +r.value])),
+    weights: Object.fromEntries($$('input[id^=w_]').map(r => [r.id.slice(2), +r.value])),
     guest_limit: {count: +$('#glc').value, minutes: +$('#glm').value}, anthropic_key: $('#skey').value,
     audience: {...Object.fromEntries($$('[id^=a_]').filter(x => x.id !== 'a_cista').map(x => [x.id.slice(2), x.value])), cista_verzija: $('#a_cista').checked}};
   await api('/api/settings', s); toast('Sacuvano');
@@ -448,6 +483,9 @@ async function saveSettings() {
 // ---------- actions ----------
 const sendRating = async (id, r) => { await api(`/api/plays/${id}/rate`, {rating: r}); };
 const actions = {
+  fontsmaller: () => setFontScale(fontScale-5),
+  fontlarger: () => setFontScale(fontScale+5),
+  fontreset: () => setFontScale(115),
   navmenu: () => { const open=document.body.classList.toggle('nav-open'); $('#settingsbtn').setAttribute('aria-expanded',String(open)); },
   go: el => go(el.dataset.p),
   mini: () => {
@@ -881,3 +919,54 @@ function consoleModal(title, selector) {
 }
 actions.consolehistory = () => consoleModal('Veceras pusteno','#played');
 actions.consoledetails = () => consoleModal('Detalji preporuka','#suggestionDiagnostics');
+
+
+
+// Excerpt comparison is separate from the fifth recommendation and LIVE list.
+const timecode=s=>Math.floor(s/60)+':'+String(Math.round(s%60)).padStart(2,'0');
+function chorusSeconds(value) {
+  const text=String(value).trim(),parts=text.split(':');
+  const n=parts.length===2 && /^\d+$/.test(parts[0]) && /^\d{1,2}$/.test(parts[1]) && +parts[1]<60 ? +parts[0]*60 + +parts[1] : Number(text);
+  if(!text || !Number.isFinite(n) || n<0)throw Error('Unesi vreme kao 0:45 ili broj sekundi.');
+  return n;
+}
+pages.chorus = async () => {
+  state.chorus ||= {a:null,b:null,a_start:30,a_end:60,b_start:30,b_end:60};
+  const c=state.chorus;
+  $('#main').innerHTML=`<h2>Poredjenje odabranih refrena</h2><p>Izaberi dve pesme i obelezi samo refren (12–60 sekundi po pesmi). Obradjuju se samo ti delovi. Rezultat ne menja pet preporuka, LIVE listu ili stari audio sken.</p>
+  <div class="grid">${['a','b'].map(side=>`<section class="card"><h3>Refren ${side.toUpperCase()}</h3><div class="row"><input id="chorusQuery_${side}" placeholder="Pesma / izvodjac"><button data-act="chorussearch" data-side="${side}">Pretrazi</button></div><div id="chorusHits_${side}"></div><p id="chorusChosen_${side}">${c[side]?name(c[side]):'Izaberi pesmu iz rezultata pretrage.'}</p><div class="row"><label>Pocetak <input id="chorusStart_${side}" value="${timecode(c[side+'_start'])}" style="width:85px" aria-label="Pocetak refrena ${side.toUpperCase()}"></label><label>Kraj <input id="chorusEnd_${side}" value="${timecode(c[side+'_end'])}" style="width:85px" aria-label="Kraj refrena ${side.toUpperCase()}"></label></div></section>`).join('')}</div>
+  <div class="row"><label>Prag ritma <input id="chorusRhythmCutoff" type="number" min="50" max="100" value="${c.rhythm_cutoff || 90}" style="width:75px">%</label><label>Prag tonalnog poklapanja <input id="chorusTonalCutoff" type="number" min="50" max="100" value="${c.tonal_cutoff || 85}" style="width:75px">%</label></div><p class="small mut">Tonalni prolaz dodatno trazi najmanje 60% uporedjenog dela i 8 sekundi poravnanja, uz tonalne promene. Isti Camelot ili jedan akord nisu dovoljni. Prolaz u ovom alatu: ritam ILI tonalno; oba prolaza su jaci nalaz.</p><div class="row"><button class="pri" data-act="choruscompare" data-scan-start="chorus">Uporedi samo refrene</button><button class="bad" data-act="scanstop" data-kind="chorus" data-scan-stop="chorus" disabled>Stop</button><span class="mut" data-scan-status="chorus"></span></div>
+  <div id="chorusResult"></div>`;
+  updateScanControls(state.status?.job || {});
+  async function poll() {try{const d=await api('/api/chorus/status');if(state.page==='chorus' && d.result && JSON.stringify(d.result)!==state.chorusResultSig){state.chorusResultSig=JSON.stringify(d.result);renderChorusResult(d.result);}}catch{}}
+  state.chorusResultSig='';await poll();state.timer=setInterval(poll,1200);
+};
+actions.chorussearch=async el=>{
+  const side=el.dataset.side,q=$('#chorusQuery_'+side).value.trim();
+  if(q.length<2)throw Error('Unesi bar dva slova.');
+  const items=await api('/api/search?q='+encodeURIComponent(q));
+  state.chorusHits ||= {};state.chorusHits[side]=items;
+  $('#chorusHits_'+side).innerHTML=items.slice(0,15).map(t=>`<div class="row"><button data-act="choruspick" data-side="${side}" data-id="${t.id}">Izaberi</button><span>${name(t)}</span></div>`).join('') || '<p>Nema rezultata.</p>';
+};
+actions.choruspick=el=>{
+  const side=el.dataset.side,t=state.chorusHits[side].find(t=>t.id===+el.dataset.id);
+  state.chorus[side]=t;$('#chorusChosen_'+side).innerHTML=name(t);$('#chorusHits_'+side).innerHTML='';
+};
+actions.choruscompare=async()=>{
+  const c=state.chorus,body={};
+  for(const side of ['a','b']){
+    if(!c[side])throw Error('Izaberi obe pesme.');
+    body[side]=c[side].id;
+    body[side+'_start']=c[side+'_start']=chorusSeconds($('#chorusStart_'+side).value);
+    body[side+'_end']=c[side+'_end']=chorusSeconds($('#chorusEnd_'+side).value);
+    if(body[side+'_end']-body[side+'_start']<12 || body[side+'_end']-body[side+'_start']>60)throw Error('Odaberi 12–60 sekundi po refrenu.');
+  }
+  body.rhythm_cutoff=c.rhythm_cutoff=+$('#chorusRhythmCutoff').value;body.tonal_cutoff=c.tonal_cutoff=+$('#chorusTonalCutoff').value;
+  await api('/api/chorus/compare',body);$('#chorusResult').textContent='Uporedjujem samo odabrane delove...';await refreshStatus();
+};
+function renderChorusResult(d){
+  const t=d.tonal;
+  $('#chorusResult').innerHTML=`<div class="card"><h3>Rezultat refrena</h3><p><b>${d.rhythm_pass && d.tonal_pass ? 'PROLAZE OBA USLOVA' : d.rhythm_pass ? 'PROLAZI RITAM' : d.tonal_pass ? 'PROLAZI TONALNI USLOV' : 'NIJEDAN USLOV NE PROLAZI'}</b></p><p>A: <b>${name(d.a)}</b> · ${timecode(d.a.start)}–${timecode(d.a.end)}<br>B: <b>${name(d.b)}</b> · ${timecode(d.b.start)}–${timecode(d.b.end)}</p><p><b>Ritmicki obrazac: ${d.rhythm_score}%</b> · Audio tempo A ${d.bpm_a} / B ${d.bpm_b} BPM</p><p><b>Tonalno poklapanje poravnatog dela: ${t.tonal_score}%</b> · Obuhvaceno ${t.coverage}% oba odabrana dela · pomak tonaliteta ${t.pitch_shift} polutonova</p><p>Poravnati deo A ${timecode(t.a_from)}–${timecode(t.a_to)} ↔ B ${timecode(t.b_from)}–${timecode(t.b_to)}</p>${d.notes.map(n=>`<p class="mut">${esc(n)}</p>`).join('')}<p class="mut">${esc(d.disclaimer)} Tonalno poklapanje nije samo po sebi potvrda iste melodije ili sempla.</p>
+  <p>Rucno preslusavanje: zvuk se pokrece tek kada kliknes Play.</p><div class="row">${['a','b'].map(s=>`<label>Refren ${s.toUpperCase()}<br><audio controls preload="none" src="/api/file/${d[s].id}#t=${d[s].start},${d[s].end}" style="max-width:100%"></audio></label>`).join('')}</div></div>`;
+}
+document.addEventListener('play',e=>{if(e.target.tagName==='AUDIO')$$('audio').forEach(a=>{if(a!==e.target)a.pause();});},true);

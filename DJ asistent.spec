@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_submodules, collect_all
 audio_data, audio_bins, audio_imports = collect_all('imageio_ffmpeg')
 hiddenimports = ['app.main', 'app.audio_rhythm', 'app.grid_scan'] + audio_imports
 hiddenimports += collect_submodules('uvicorn')
-hiddenimports += ['app.shortcuts', 'mido.backends.rtmidi', 'rtmidi']
+hiddenimports += ['app.chorus', 'app.restore_smoke', 'app.window_surface', 'app.shortcuts', 'mido.backends.rtmidi', 'rtmidi']
 
 
 a = Analysis(
@@ -28,7 +28,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='DJ asistent',
+    name='DJ Miljan Assistant',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -42,3 +42,4 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
+

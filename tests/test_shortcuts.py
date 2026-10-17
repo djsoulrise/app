@@ -42,9 +42,12 @@ class ShortcutsTests(unittest.TestCase):
             calls.append(command);state['iconic']=command==6
             if command==6: state['foreground']=200
         def foreground(hwnd): state['foreground']=hwnd;return 1
-        w.user=Msg(GetForegroundWindow=lambda:state['foreground'],IsIconic=lambda h:state['iconic'],ShowWindow=show,SetForegroundWindow=foreground,IsWindow=lambda h:True)
-        w.toggle();self.assertTrue(state['iconic'])
-        w.toggle();self.assertFalse(state['iconic']);self.assertEqual(state['foreground'],100)
+        w.desktop=Msg(minimize=lambda:show(100,6),restore=lambda:show(100,9),show=lambda:None)
+        w.user=Msg(GetForegroundWindow=lambda:state['foreground'],IsIconic=lambda h:state['iconic'],SetForegroundWindow=foreground,IsWindow=lambda h:True)
+        with patch('app.window_surface.refresh') as repaint:
+            w.toggle();self.assertTrue(state['iconic'])
+            w.toggle();self.assertFalse(state['iconic']);self.assertEqual(state['foreground'],100)
+            repaint.assert_called_once_with(w.desktop)
         self.assertEqual(calls,[6,9])
     def test_combo_requires_hold_and_edge(self):
         bindings={'toggle_window':{'modifier':['cc',15,110],'button':['cc',15,111]}}
@@ -102,6 +105,18 @@ class ShortcutsTests(unittest.TestCase):
         self.assertFalse(w.keyboard_scope(False))
         foreground[0]=100
         self.assertFalse(w.keyboard_scope(True));self.assertTrue(w.keyboard_scope(False))
+    def test_ui_font_preferences_persist_and_validate(self):
+        from fastapi.testclient import TestClient
+        from app import main
+        import json
+        with patch.object(main,'SETTINGS',{'dj_pin':'000000'}):
+            client=TestClient(main.app,client=('127.0.0.1',12345))
+            self.assertEqual(client.get('/api/ui-preferences').json()['font_scale'],115)
+            self.assertEqual(client.post('/api/ui-preferences',json={'font_scale':140,'ctrl_wheel_text':False}).status_code,200)
+            self.assertEqual(client.get('/api/ui-preferences').json(),{'font_scale':140,'ctrl_wheel_text':False})
+            saved=json.loads(sc.config.SETTINGS_FILE.read_text())
+            self.assertEqual(saved['ui_preferences']['font_scale'],140)
+            self.assertEqual(client.post('/api/ui-preferences',json={'font_scale':999}).status_code,400)
     def test_remote_clients_blocked(self):
         from app.main import _shortcut_local
         from fastapi import HTTPException
@@ -111,3 +126,4 @@ class ShortcutsTests(unittest.TestCase):
 
 
 if __name__=='__main__': unittest.main()
+
