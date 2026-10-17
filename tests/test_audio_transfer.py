@@ -24,9 +24,9 @@ class TransferTests(unittest.TestCase):
    check=m.check();self.assertEqual(check['counts']['skenirano'],1);self.assertEqual(check['database_path'],str(self.root/'library.db'))
   row=db.one('SELECT * FROM auto_chorus');self.assertEqual(row['path'],str(new));self.assertEqual(row['mtime'],new.stat().st_mtime_ns);self.assertTrue(auto_audio.valid(row,db.one('SELECT * FROM tracks')))
  def test_same_name_different_content_does_not_import_and_model_mismatch_is_visible(self):
-  package=self.package();self.file.write_bytes(b'other file content')
+  package=self.package();stamp=self.file.stat().st_mtime_ns;self.file.write_bytes(b'other file content');os.utime(self.file,ns=(stamp,stamp))
   self.assertEqual(m.apply_package(package)['matched'],0)
-  self.file.write_bytes(b'exact file content');package['items'][0]['chorus']['model']='other-model'
+  self.file.write_bytes(b'exact file content');os.utime(self.file,ns=(stamp,stamp));package['items'][0]['chorus']['model']='other-model'
   result=m.apply_package(package);self.assertEqual(result['matched'],0);self.assertEqual(result['incompatible'],1)
  def test_manual_relocate_requires_hash_and_unique_missing_track(self):
   package=self.package();new=self.root/'moved'/'song.mp3';new.parent.mkdir();new.write_bytes(self.file.read_bytes());self.file.unlink()

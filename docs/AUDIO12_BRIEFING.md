@@ -38,8 +38,8 @@ an unambiguous missing path in the Assistant database only. It never writes
 Traktor files. Incompatible engine/model versions are skipped and counted;
 Relocate cannot convert them. Source analyzed window offsets are adopted
 because file content is identical; source cue hints are retained as provenance
-and the target cue-key stamps later local cue changes. Hashes are stat-cached
-and changes during hashing or application are detected. Export/import show
+and the target cue-key stamps later local cue changes. Hashes are freshly read for transfers
+and changes during hashing or application are detected. Rapid same-size/same-mtime rewrites are not trusted as identical content. Export/import show
 progress and Stop. Check reads cache metadata and file stats only, with no
 decoding, hashing or inference; it lists status and paths without a scan.
 

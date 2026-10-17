@@ -15,8 +15,9 @@ def init():
 
 
 def digest(path,stop_event=None):
-    stat=os.stat(path);row=db.one('SELECT * FROM audio_file_hashes WHERE path=?',(str(path),))
-    if row and row['size']==stat.st_size and row['mtime']==stat.st_mtime_ns:return row['digest']
+    stat=os.stat(path)
+    # Always re-read content for a transfer: Windows can preserve size/mtime
+    # across rapid rewrites. Metadata alone is not a content identity proof.
     h=hashlib.sha256()
     with open(path,'rb') as f:
         while chunk:=f.read(1024*1024):check_stop(stop_event);h.update(chunk)
