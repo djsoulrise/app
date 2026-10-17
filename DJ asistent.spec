@@ -1,25 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_submodules, collect_all
 
-audio_data, audio_bins, audio_imports = collect_all('imageio_ffmpeg')
-model_data, model_bins, model_imports = collect_all('onnxruntime')
-librosa_data, librosa_bins, librosa_imports = collect_all('librosa')
-hiddenimports = ['app.main', 'app.auto_audio', 'app.learned_audio', 'app.audio_rhythm', 'app.grid_scan'] + audio_imports
-hiddenimports += model_imports + librosa_imports
-hiddenimports += collect_submodules('uvicorn')
-hiddenimports += ['app.chorus', 'app.restore_smoke', 'app.window_surface', 'app.shortcuts', 'mido.backends.rtmidi', 'rtmidi']
-
+hiddenimports = collect_submodules('uvicorn') + ['app.restore_smoke', 'app.window_surface', 'app.shortcuts']
 
 a = Analysis(
     ['desktop.py'],
     pathex=[],
-    binaries=audio_bins + model_bins + librosa_bins,
-    datas=[('app/static', 'app/static'), ('assets', 'assets')] + audio_data + model_data + librosa_data,
+    binaries=[],
+    datas=[('app/static', 'app/static')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['torch','torchaudio','torchvision','onnx'],
+    excludes=['torch','torchaudio','torchvision','onnx','onnxruntime','librosa','numpy','scipy','mido','rtmidi','imageio_ffmpeg','numba'],
     noarchive=False,
     optimize=0,
 )
@@ -31,11 +24,11 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='DJ Miljan Assistant',
+    name='DJ Miljan Assistant Lite',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,

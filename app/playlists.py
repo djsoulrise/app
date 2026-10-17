@@ -66,10 +66,8 @@ def playlist_tracks(pl: dict) -> list[dict]:
 
 
 def export_m3u(name: str, tracks: list[dict]) -> str:
-    folder = SETTINGS.get("export_dir")
-    if not folder:
-        raise ValueError("Folder za izvoz nije podesen.")
-    os.makedirs(folder, exist_ok=True)
+    from .export_paths import resolve
+    folder = str(resolve())
     fn = re.sub(r'[\\/:*?"<>|]', "_", name).strip(" .") or "plejlista"
     path = os.path.join(folder, fn + ".m3u8")
     with open(path, "w", encoding="utf-8") as f:

@@ -1,5 +1,5 @@
 """Inspect a read-only NML copy. Grid markers are distinct from audio tempo estimates."""
-from . import db, nml, audio_rhythm
+from . import db, nml
 from .config import SETTINGS
 from .scan_control import ScanCancelled, check_stop
 
@@ -32,24 +32,16 @@ def scan(progress=None, stop_event=None):
     return {'checked': len(tracks), 'matched': db.one('SELECT COUNT(*) n FROM grid_scan')['n']}
 
 
-def audio_search(progress=None, stop_event=None):
-    scanned = audio_rhythm.scan(progress, stop_event)
-    items = results()['items']
-    return {'scan': scanned, 'audio_suspicions': sum(bool(t['audio_variable']) for t in items)}
 
 
 def results():
-    audio_rhythm.init()
     has = db.one("SELECT name FROM sqlite_master WHERE name='grid_scan'")
     grids = {r['track_id']: r for r in db.rows('SELECT * FROM grid_scan')} if has else {}
-    audio = {r['track_id']: r for r in db.rows("SELECT * FROM audio_rhythm WHERE status='ok'")}
     import json
     out = []
     for t in db.rows('SELECT * FROM tracks ORDER BY artist,title'):
         g = grids.get(t['id'])
-        a = audio.get(t['id'])
-        features = json.loads(a['features']) if audio_rhythm.valid(a, t) else {}
-        variable = features.get('variable_tempo_suspected', False)
+        variable = False
         if not (t['flex_grid'] or (g and g['markers'] > 1) or variable):
             continue
         reason = ('Razlicite BPM vrednosti u Traktor gridovima' if g and g['bpm_values'] > 1

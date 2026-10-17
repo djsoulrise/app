@@ -12,8 +12,9 @@ from .names import core_title, version_signature
 FMT_RANK = {"flac": 0, "wav": 1, "aiff": 1, "aif": 1, "m4a": 2, "mp3": 3}
 
 
-def _fpcalc() -> str | None:
-    return shutil.which("fpcalc")
+def _fpcalc():
+    # Lite never launches an external audio analyser.
+    return None
 
 
 def _fingerprint(path: str) -> list[int] | None:

@@ -23,13 +23,6 @@ def run(report_path):
     def worker():
         try:
             assert window.events.loaded.wait(45), 'WebView did not load'
-            from concurrent.futures import ProcessPoolExecutor
-            from . import performance
-            ctx=performance.spawn_context()
-            with ProcessPoolExecutor(2,mp_context=ctx,initializer=performance.initialize_worker,initargs=(ctx.Event(),)) as pool:
-                probes=[pool.submit(performance.worker_probe) for _ in range(2)]
-                for future in probes:assert future.result(timeout=30)['worker']=='1'
-            result['workers_after_gui']=True
             refresh(window)
             native = WindowsWindow(title,window)
             manager = Manager();manager.window = native

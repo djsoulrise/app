@@ -50,10 +50,9 @@ def lines(items, relative=False):
 def export(eid, day, copy_songs=False, progress=None, stop_event=None):
     selected=tracks(eid,day)
     if not selected: raise ValueError('Nema odsviranih pesama za taj dan.')
-    root=Path(config.SETTINGS.get('export_dir') or '')
-    if not config.SETTINGS.get('export_dir'): raise ValueError('Izaberi folder za izvoz u Podesavanjima.')
-    root.mkdir(parents=True,exist_ok=True)
-    name=f"{day}_{clean(event(eid)['name'])}_{eid}"
+    from .export_paths import resolve
+    root=resolve()
+    name=f"{day}_{clean(event(eid)['name'])[:40]}_{eid}"
     folder=Path(tempfile.mkdtemp(prefix=name+('_pesme_' if copy_songs else '_lista_'),dir=root))
     result={'path':str(folder),'day':day,'plays':len(selected),'copied':0,'missing':[],'playlist':None}
     copied={};playlist=[]

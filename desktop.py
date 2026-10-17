@@ -1,11 +1,5 @@
 """Desktop launcher: runs the server in-process and shows the UI in a native window (WebView2)."""
 import os
-for _thread_key in ("OMP_NUM_THREADS","OPENBLAS_NUM_THREADS","MKL_NUM_THREADS","NUMBA_NUM_THREADS"):
-    os.environ[_thread_key]="1"
-import multiprocessing
-if __name__ == "__main__":
-    multiprocessing.freeze_support()
-
 import socket
 import sys
 import threading
@@ -51,65 +45,19 @@ def main() -> None:
         return
     if '--build-self-test' in sys.argv:
         import json
-        import os
         from pathlib import Path
-        from app import audio_rhythm, db
-        import numpy as np
-        from scipy.signal import find_peaks
-        db.init()
-        from concurrent.futures import ProcessPoolExecutor
-        from app import performance
-        if getattr(sys,'frozen',False):
-            sys._base_executable=r'C:\DJ_MISSING_BUILD_HOST\python.exe'
-            multiprocessing.set_executable(sys._base_executable)
-        ctx=performance.spawn_context()
-        with ProcessPoolExecutor(2,mp_context=ctx,initializer=performance.initialize_worker,initargs=(ctx.Event(),str(db.DB_FILE))) as pool:
-            probes=[pool.submit(performance.worker_probe) for _ in range(2)]
-            for future in probes:
-                result=future.result(timeout=45)
-                assert result['pid']!=os.getpid() and result['threads']=='1' and result['worker']=='1'
-        decoder = audio_rhythm.decoder()
-        assert Path(decoder).is_file(), 'FFmpeg is missing from the EXE'
-        assert find_peaks(np.array([0., 1., 0.]))[0].size == 1
-        from app.main import STATIC
-        assert (Path(STATIC) / 'index.html').is_file()
-        audio_rhythm.init()
-        from app import native_files
-        import mido.backends.rtmidi, rtmidi
+        from app import db, native_files
         from app.shortcuts import verify_hotkey_support
-        assert verify_hotkey_support(), "Windows hotkey API failed"
+        from app.main import STATIC
+        db.init()
+        assert (Path(STATIC)/'index.html').is_file()
+        assert verify_hotkey_support()
         assert native_files.verify_drag_payload(r'C:\Music\Niš, Žurka & song.flac')
-        from app import learned_audio
-        assert learned_audio.available(), 'Trained model is missing from EXE'
-        sr=11025;t=np.arange(sr*13)/sr
-        signal=(.4*np.sin(2*np.pi*(220+40*np.sin(t))*t)+.1*np.sin(2*np.pi*80*t)*np.exp(-(t%.5)*40)).astype('float32')
-        signature=learned_audio.signatures(signal,{'start':0,'end':13})
-        assert learned_audio.similarity(signature,signature)[0]>99.9
-        from app import phrase_match
-        phrase=phrase_match.extract(signal)
-        assert phrase_match.unpack(phrase['chroma']).shape[1]==12
-        assert phrase_match.compare(phrase,phrase)['seconds']>=8
-        from app import loop_audio
-        periodic=loop_audio.extract(signal)
-        assert periodic and loop_audio.compare(periodic,periodic)['score']>99
-        import tempfile,wave
-        from app import auto_audio
-        with tempfile.TemporaryDirectory() as tmp:
-            audio=Path(tmp)/'worker.wav'
-            with wave.open(str(audio),'wb') as wav:
-                wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(sr)
-                wav.writeframes((signal*30000).astype('<i2').tobytes())
-            payload=({'id':1,'path':str(audio)},'[]',True)
-            with ProcessPoolExecutor(2,mp_context=ctx,initializer=performance.initialize_worker,initargs=(ctx.Event(),str(db.DB_FILE))) as pool:
-                jobs=[pool.submit(auto_audio.calculate,payload) for _ in range(2)]
-                for job in jobs:
-                    calculated=job.result(timeout=90)
-                    assert calculated['data'][0]['features'].get('neural')
-                    assert calculated['data'][0]['song_phrase']['sample']['data']
-                    assert calculated['model']==learned_audio.MODEL_ID
-        report = sys.argv[sys.argv.index('--build-self-test') + 1]
-        Path(report).write_text(json.dumps({'ok': True, 'parallel_audio': True, 'native_file_drop': True, 'shortcuts_backend': True, 'learned_model': True, 'phrase_features': True, 'periodic_features': True, 'frozen': bool(getattr(sys, 'frozen', False)),
-                                           'decoder_in_bundle': str(Path(decoder).resolve()).startswith(str(Path(sys._MEIPASS).resolve()))}), encoding='utf-8')
+        forbidden = ('mido','rtmidi','onnxruntime','librosa','numpy','scipy','app.auto_audio')
+        assert not any(name in sys.modules for name in forbidden)
+        Path(sys.argv[sys.argv.index('--build-self-test')+1]).write_text(json.dumps({
+            'ok':True,'edition':'lite','frozen':bool(getattr(sys,'frozen',False)),
+            'keyboard':True,'native_file_drop':True,'heavy_modules_loaded':False}),encoding='utf-8')
         return
     port = int(SETTINGS["port"])
     # Do not silently attach the new EXE to an older process on the same port.
@@ -127,7 +75,7 @@ def main() -> None:
     if not _wait_port(port):
         print(f"Server nije pokrenut (port {port} je mozda zauzet).")
         sys.exit(1)
-    title = "DJ Miljan Assistant"
+    title = "DJ Miljan Assistant Lite"
     from app.shortcuts import manager, WindowsWindow
     width, height, minimum = _window_bounds()
     window = webview.create_window(title, f"http://127.0.0.1:{port}", width=width, height=height, min_size=minimum, background_color="#171918")

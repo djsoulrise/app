@@ -79,8 +79,8 @@ function performanceBadges(t) {
 }
 
 // ---------- navigation ----------
-const PAGES = [['sada', 'Sada'], ['lib', 'Biblioteka'], ['dupes', 'Duplikati'], ['audio', 'Audio ritam'], ['grids', 'Fleksibilni gridovi'], ['pl', 'Plejliste'],
-  ['eve', 'Vece'], ['req', 'Zahtevi'], ['ai', 'AI'], ['trend', 'Trendovi'], ['shortcuts', 'Precice'], ['set', 'Podesavanja']];
+const PAGES = [['sada', 'Sada'], ['lib', 'Biblioteka'], ['dupes', 'Duplikati'], ['grids', 'Fleksibilni gridovi'], ['pl', 'Plejliste'],
+  ['eve', 'Vece'], ['req', 'Zahtevi'], ['shortcuts', 'Precice'], ['set', 'Podesavanja']];
 function go(p) {
   if (state.keyLearn || (state.page === 'shortcuts' && p !== 'shortcuts')) cancelShortcutLearn();
   if (state.mini) p = 'sada';
@@ -101,22 +101,17 @@ function go(p) {
 
 async function refreshStatus() {
   try {
-    const performanceEpoch=state.performanceEpoch||0;
     const s = await api('/api/status');
-    if(performanceEpoch!==(state.performanceEpoch||0)){s.gig_mode=state.status?.gig_mode;s.audio_workers=state.status?.audio_workers;}
     const j = s.job, b = s.broadcast;
-    $('#statusbar').innerHTML = `${s.gig_mode?'GIG MOD · ':''}Pesama: ${s.counts.n || 0} (Traktor ${s.counts.trk || 0}, flex ${s.counts.flex || 0}) | ` +
+    $('#statusbar').innerHTML = `LITE · Pesama: ${s.counts.n || 0} (Traktor ${s.counts.trk || 0}, flex ${s.counts.flex || 0}) | ` +
       `Broadcast: ${b.running ? (b.last_connect ? 'povezan' : 'ceka') : 'ugasen'} | ` +
       (j.running ? `<b>${esc(j.phase)} ${j.done}/${j.total}</b>` : j.error ? `<span style="color:var(--bad)">${esc(j.error)}</span>` : '');
     state.status = s;
-    if($('#gigLabel'))$('#gigLabel').textContent=s.gig_mode?'ON':'OFF';
     if(state.dayExportPending && j.kind==='day_export' && !j.running && state.page==='eve'){
       state.dayExportPending=false;
       $('#dayExportResult').textContent=j.error?'Izvoz nije zavrsen: '+j.error:'Izvoz: '+(j.result?.path||'')+' · Kopirano '+(j.result?.copied||0)+' · Nedostaje '+(j.result?.missing?.length||0);
     }
     updateScanControls(j);
-    if($('#scanSkipped'))$('#scanSkipped').innerHTML=(s.scan_runtime?.recent_errors||[]).map(x=>esc(x.path)+' — '+esc(x.error)).join('<br>')||'Nema prijavljenih gresaka.';
-    if($('#scanRuntime')){const x=s.scan_runtime||{};$('#scanRuntime').textContent=`Aktivno ${Object.keys(x.active||{}).length}/${x.workers||0} radnika · Novo obradjeno ${x.finished||0} · Preskoceno sa greskom ${x.errors||0}${x.seconds_per_track?' · '+x.seconds_per_track+' s/pesmi ukupno':''}`;} 
     if (state.jobWasRunning && !j.running && !j.error) { toast(j.cancelled ? 'Zaustavljeno — rezultati sacuvani' : 'Zavrseno'); if (j.kind==='day_export' && state.page==='eve') { $('#dayExportResult').textContent='Izvoz: '+(j.result?.path||'')+' · Kopirano '+(j.result?.copied||0)+' · Nedostaje '+(j.result?.missing?.length||0); } else if (state.page !== 'sada') go(state.page); }
     state.jobWasRunning = j.running;
   } catch {}
@@ -158,8 +153,8 @@ pages.sada = async () => {
       <span id="modes"></span></div>
     <div id="res"></div>
     <div class="console-layout"><section class="suggestions-panel"><div class="panel-heading"><h3>Sledecih <b>5</b></h3><span>SELEKCIJA / MIX</span></div><div id="sug"></div></section>
-    <aside class="live-panel"><div class="panel-heading"><h3><i class="live-dot"></i> LIVE <b>3 + 6</b></h3><span>AUDIO / ISTORIJA</span></div><div id="liveaudio">Cekam trenutnu pesmu...</div></aside></div>
-    <div class="console-footer"><button data-act="consolehistory">Veceras pusteno <span class="mut">/ istorija</span></button><button data-act="consoledetails">Detalji preporuka <span class="mut">/ audio uslovi</span></button></div><div id="played" class="hidden"></div><div id="suggestionDiagnostics" class="hidden"></div>`;
+    <aside class="live-panel"><div class="panel-heading"><h3><i class="live-dot"></i> LIVE <b>3 + 6</b></h3><span>PREDLOZI / ISTORIJA</span></div><div id="liveaudio">Cekam trenutnu pesmu...</div></aside></div>
+    <div class="console-footer"><button data-act="consolehistory">Veceras pusteno <span class="mut">/ istorija</span></button><button data-act="consoledetails">Detalji preporuka <span class="mut">/ osnovni algoritam</span></button></div><div id="played" class="hidden"></div><div id="suggestionDiagnostics" class="hidden"></div>`;
   drawModes(); state._drawModes = drawModes;
   $('#q').addEventListener('input', guard(async e => {
     const q = e.target.value.trim();
@@ -230,7 +225,6 @@ async function loadSuggest(n) {
   if (signature !== state.shortcutSignature) state.shortcutIndex = 0;
   state.shortcutSignature = signature; state.shortcutItems = d.items;
   const c = d.current, src = n ? n.source : '';
-  state.audioDiagnostics = d.audio_diagnostics;
   if (state.tiker) {
     state.tikCur = c; state.tikItems = d.items; state.tikIdx = 0;
     renderTik(false);
@@ -247,7 +241,6 @@ async function loadSuggest(n) {
     return;
   }
   const notes = [];
-  if (d.audio_status) notes.push(esc(d.audio_status) + ' Zadrzan je izvorni predlog.');
   if (d.blocked_history && d.blocked_history.length) notes.push('Iz tvojih lista preskoceno zbog stila: ' + d.blocked_history.map(esc).join('; '));
   if (d.relaxed && d.relaxed.length) notes.push('Premalo pesama u istom stilu, opusten filter: ' + d.relaxed.join(', '));
   $('#cur').innerHTML = `<div class="card cur"><div class="now-indicator">NOW<span>AKTIVNA PESMA</span></div><div class="current-body"><div class="current-title" title="${esc((c.artist ? c.artist+' - ' : '')+c.title)}">${name(c)}</div><div class="current-meta">${performanceBadges(c)} <span class="mut">${esc(c.style_label || '')} · ${esc(src || '')}</span></div></div></div>`;
@@ -323,7 +316,7 @@ async function openTrack(id) {
 
 // --- Duplikati ---
 pages.dupes = async () => {
-  $('#main').innerHTML = `<h2>Duplikati</h2><p class="mut">Poredjenje po trajanju i audio otisku (ako je instaliran fpcalc), inace po trajanju i metapodacima. Mashup/edit/remix verzije nisu duplikati originala. Nista se ne brise: fajlovi se samo premestaju u folder za duplikate posle potvrde.</p>
+  $('#main').innerHTML = `<h2>Duplikati</h2><p class="mut">Poredjenje samo po trajanju i metapodacima, bez audio analize. Mashup/edit/remix verzije nisu duplikati originala. Nista se ne brise: fajlovi se samo premestaju u folder za duplikate posle potvrde.</p>
     <button class="pri" data-act="finddupes">Trazi duplikate</button><div id="dupres"></div>`;
 };
 
@@ -414,36 +407,12 @@ pages.req = async () => {
 };
 
 // --- AI ---
-pages.ai = async () => {
-  const st = await api('/api/status');
-  $('#main').innerHTML = `<h2>AI predlog po situaciji</h2>${st.ai ? '' : '<p class="mut">AI nije podesen: unesi Anthropic API kljuc u Podesavanjima. Ostalo radi i bez AI-ja.</p>'}
-    <textarea id="aitext" placeholder="npr. kraj vecere, publika vec pije, hocu pesme za pevanje u glas, mesovita publika 30-50 god."></textarea>
-    <div class="row"><input id="aicount" type="number" value="15" style="width:80px"><button class="pri" data-act="aisit">Predlozi iz moje biblioteke</button></div><div id="aires"></div>`;
-};
-
-// --- Trendovi ---
-pages.trend = async () => {
-  const [src, items] = [await api('/api/trends/sources'), await api('/api/trends/items')];
-  const yt = l => { const m = /(?:youtu\.be\/|v=)([\w-]{11})/.exec(l || ''); return m ? m[1] : null; };
-  $('#main').innerHTML = `<h2>Trendovi sa zabava i festivala</h2>
-    <p class="mut">Samo kad ima interneta. Izvori su RSS/Atom feedovi koje sam dodas (proveri uslove koriscenja svakog izvora) i linkovi koje dodas rucno. Sajtovi se ne "grebu". Prikazuje se samo ono sto je stvarno pronadjeno.</p>
-    <div class="card"><div class="row"><input id="tsn" placeholder="Naziv izvora"><input id="tsu" placeholder="URL RSS/Atom feeda" style="flex:1"><button data-act="tsadd">Dodaj izvor</button></div>
-    ${src.map(s => `<div class="row"><b>${esc(s.name)}</b> <span class="mut small">${esc(s.url)}</span><button class="sm" data-act="tsfetch" data-id="${s.id}">Preuzmi</button><button class="sm bad" data-act="tsdel" data-id="${s.id}">x</button></div>`).join('')}</div>
-    <div class="card"><div class="row"><input id="tmsong" placeholder="Izvodjac - Naslov"><input id="tmlink" placeholder="YouTube/Spotify link" style="flex:1"><button data-act="tmadd">Dodaj rucno</button></div></div>
-    <table><tr><th>Pesma</th><th>Uklapanje</th><th>Biblioteka</th><th>Preslusaj</th><th></th></tr>${items.map(i => `<tr><td>${esc(i.song)}</td>
-      <td>${i.fit != null ? i.fit : ''}<div class="small mut">${esc(i.why)}</div></td>
-      <td>${i.track ? '<span class="badge ok">imam</span> ' + name(i.track) : '<span class="badge bad">nemam</span>' + (i.similar ? '<div class="small mut">slicno: ' + i.similar.map(x => name(x)).join('; ') + '</div>' : '')}</td>
-      <td>${i.link ? (yt(i.link) ? `<button class="sm" data-act="play" data-v="${yt(i.link)}">▶ plejer</button> ` : '') + `<a href="${esc(i.link)}" target="_blank" rel="noopener noreferrer">link</a>` : ''}</td>
-      <td><button class="sm bad" data-act="tidel" data-id="${i.id}">x</button></td></tr>`).join('')}</table>`;
-};
-
 // --- Podesavanja ---
 pages.set = async () => {
   const s = await api('/api/settings'), st = await api('/api/status');
   if(state.page!=='set')return;
   const w = s.weights, W = {hist: 'Moje liste (history)', key: 'Key harmonija', bpm: 'BPM', vibe: 'Vajb (tagovi/pozicija)', energy: 'Energija', year: 'Godina', genre: 'Zanr', feedback: 'Ocene (palo/nije)'};
-  $('#main').innerHTML = `<h2>Podesavanja</h2><div class="card"><h3>Performanse / nastup</h3><label><input id="gigMode" type="checkbox" ${st.gig_mode?'checked':''}> Gig mod — pauziraj novi sken; AI preporuke iz baze ostaju aktivne</label><p class="small mut">AI poredjenje skenirane baze nastavlja u jednom odvojenom radniku sa nizim prioritetom. Gig mod blokira dekodiranje novih pesama.</p><label>Paralelni sken: <select id="audioWorkers">${Array.from({length:st.cpu_count||4},(_,i)=>i+1).map(n=>`<option value="${n}" ${n==st.audio_workers?'selected':''}>${n}</option>`).join('')}</select> radnika</label><p><label><input id="scanTurbo" type="checkbox" ${st.scan_turbo?'checked':''}> Maksimalna brzina skeniranja — sva CPU jezgra, uz RAM ogranicenje</label></p><button data-act="saveperformance">Sacuvaj performanse</button></div>
-    <div class="card"><h3>Velicina teksta</h3><label><input type="checkbox" id="ctrlWheelText" ${ctrlWheelText ? 'checked' : ''}> Ctrl + tockic misa povecava / smanjuje tekst u celoj aplikaciji</label>
+  $('#main').innerHTML = `<h2>Podesavanja</h2>    <div class="card"><h3>Velicina teksta</h3><label><input type="checkbox" id="ctrlWheelText" ${ctrlWheelText ? 'checked' : ''}> Ctrl + tockic misa povecava / smanjuje tekst u celoj aplikaciji</label>
     <div class="row"><button data-act="fontsmaller">A−</button><input type="range" id="fontScaleRange" min="75" max="160" step="5" value="${fontScale}" aria-label="Velicina teksta"><b id="fontScaleValue">${fontScale}%</b><button data-act="fontlarger">A+</button><button data-act="fontreset">Pocetna velicina</button></div><p class="small mut">Ctrl + skrol gore: veci tekst. Ctrl + skrol dole: manji tekst. Promena se cuva odmah na ovom racunaru.</p></div>
     <div class="card"><h3>Biblioteka</h3>
       <label class="small mut">Muzicki folderi (jedan po redu)</label><textarea id="sfold">${esc(s.music_folders.join('\n'))}</textarea>
@@ -459,10 +428,6 @@ pages.set = async () => {
       <div class="row"><label>Broadcast port</label><input id="sbp" value="${s.broadcast_port}" style="width:90px"><label><input type="checkbox" id="sbe" ${s.broadcast_enabled ? 'checked' : ''}> ukljucen (restart)</label></div></div>
     <div class="card"><h3>Tezine predloga</h3>${Object.keys(W).map(k => `<div class="row"><span style="width:240px">${W[k]}</span><input type="range" min="0" max="5" step="0.1" id="w_${k}" value="${w[k]}"><span class="small" id="wv_${k}">${w[k]}</span></div>`).join('')}
       <button data-act="saveset">Sacuvaj</button> <button data-act="rebuild">Ponovo nauci iz mojih lista</button></div>
-    <div class="card"><h3>Profil publike (za AI i trendove)</h3>${Object.entries(s.audience).filter(([k]) => k !== 'cista_verzija').map(([k, v]) => `<div class="row"><span style="width:160px">${k}</span><input id="a_${k}" value="${esc(v)}" style="flex:1"></div>`).join('')}
-      <label><input type="checkbox" id="a_cista" ${s.audience.cista_verzija ? 'checked' : ''}> samo cista verzija</label></div>
-    <div class="card"><h3>AI (opciono)</h3><div class="row"><input id="skey" type="password" placeholder="${s.anthropic_key_set ? 'kljuc je sacuvan (upisi novi da zamenis)' : 'Anthropic API kljuc'}" style="flex:1"><input id="smodel" value="${esc(s.model)}" style="width:220px"></div>
-      <p class="mut small">Kljuc se cuva lokalno u data/settings.json. Za AI se salje samo kratak spisak pesama iz biblioteke.</p></div>
     <div class="card"><h3>Gosti</h3><div class="row"><label>Max zahteva</label><input id="glc" value="${s.guest_limit.count}" style="width:70px"><label>na minuta</label><input id="glm" value="${s.guest_limit.minutes}" style="width:70px"></div>
       <p class="mut small">PIN za tablet: <b>${esc(s.dj_pin)}</b> — otvori na tabletu http://IP:${s.port}/login?pin=PIN</p></div>
     <button class="pri" data-act="saveset">Sacuvaj sve</button>`;
@@ -474,10 +439,10 @@ pages.set = async () => {
 async function saveSettings() {
   const s = {
     music_folders: $('#sfold').value.split('\n').map(x => x.trim()).filter(Boolean), nml_path: $('#snml').value.trim(), history_dir: $('#shist').value.trim(),
-    dupes_dir: $('#sdup').value.trim(), export_dir: $('#sexp').value.trim(), broadcast_port: +$('#sbp').value, broadcast_enabled: $('#sbe').checked, model: $('#smodel').value.trim(),
+    dupes_dir: $('#sdup').value.trim(), export_dir: $('#sexp').value.trim(), broadcast_port: +$('#sbp').value, broadcast_enabled: $('#sbe').checked,
     weights: Object.fromEntries($$('input[id^=w_]').map(r => [r.id.slice(2), +r.value])),
-    guest_limit: {count: +$('#glc').value, minutes: +$('#glm').value}, anthropic_key: $('#skey').value,
-    audience: {...Object.fromEntries($$('[id^=a_]').filter(x => x.id !== 'a_cista').map(x => [x.id.slice(2), x.value])), cista_verzija: $('#a_cista').checked}};
+    guest_limit: {count: +$('#glc').value, minutes: +$('#glm').value},
+    edition: 'lite'};
   await api('/api/settings', s); toast('Sacuvano');
 }
 
@@ -516,12 +481,6 @@ const actions = {
     await api('/api/track/' + el.dataset.id, {energy: $('#eenergy').value, style: $('#estyle').value});
     closeModal(); toast('Sacuvano'); if (state.page === 'lib') await loadLib();
   },
-  audiosearch: async () => audioLoadSources(),
-  audiomatches: audioLoadMatches,
-  audiocurrent: async () => { const n = await api('/api/now'); if (!n.track_id) throw new Error('Nema trenutne pesme.'); state.audioSource = n.track_id; await audioLoadSources(n.track_id); await audioLoadMatches(); },
-  audiothreshold: async () => { const value = +$('#audioThresholdNumber').value / 100; await api('/api/audio/threshold', {threshold: value}); state.audioSavedThreshold = value; toast('Prag sacuvan; koristi ga peti audio predlog'); await audioLoadMatches(); },
-  audiocopyreport: async () => { if (!state.audioReport) throw new Error('Prvo prikazi slicne pesme.'); await navigator.clipboard.writeText(JSON.stringify(state.audioReport, null, 2)); toast('Audio izvestaj kopiran'); },
-  scanstart: async el => { const endpoint = el.dataset.kind === 'grid_audio' ? '/api/grids/audio-search' : el.dataset.kind === 'chorus_library' ? '/api/audio/chorus/scan' : '/api/audio/scan'; await api(endpoint, {}); toast('Sken pokrenut / nastavljen'); await refreshStatus(); },
   scanstop: async el => { await api('/api/job/stop', {kind: el.dataset.kind}); toast('Zaustavljam sken; zavrseni rezultati ostaju'); await refreshStatus(); },
   gridscan: async () => { await api('/api/grids/scan', {}); toast('Provera gridova pokrenuta'); await refreshStatus(); },
   // dupes
@@ -582,21 +541,6 @@ const actions = {
   addban: async () => { if ($('#banval').value.trim()) { await api('/api/bans', {kind: $('#bankind').value, value: $('#banval').value.trim()}); go('req'); } },
   delban: async el => { await api('/api/bans/' + el.dataset.id, undefined, 'DELETE'); go('req'); },
   savetip: async () => { await api('/api/settings', {tip_text: $('#tiptext').value, tip_ips_payload: $('#tipips').value}); toast('Sacuvano'); },
-  // ai
-  aisit: async () => {
-    $('#aires').innerHTML = '<p class="mut">AI razmislja...</p>';
-    const items = await api('/api/ai/situation', {text: $('#aitext').value, count: +$('#aicount').value});
-    state.aiItems = items;
-    $('#aires').innerHTML = `<div class="row"><button class="ok" data-act="aisave">Snimi kao plejlistu</button></div>` + trackList(items, t => esc(t.why));
-  },
-  aisave: async () => { const n = prompt('Naziv plejliste:', $('#aitext').value.slice(0, 40)); if (n) { await api('/api/playlists', {name: n, kind: 'static', track_ids: state.aiItems.map(t => t.id)}); toast('Sacuvano u Plejliste'); } },
-  // trends
-  tsadd: async () => { await api('/api/trends/sources', {name: $('#tsn').value, url: $('#tsu').value, kind: 'rss'}); go('trend'); },
-  tsdel: async el => { await api('/api/trends/sources/' + el.dataset.id, undefined, 'DELETE'); go('trend'); },
-  tsfetch: async el => { const r = await api('/api/trends/fetch/' + el.dataset.id, {}); toast('Novih: ' + r.added); go('trend'); },
-  tmadd: async () => { await api('/api/trends/items', {song: $('#tmsong').value, link: $('#tmlink').value}); go('trend'); },
-  tidel: async el => { await api('/api/trends/items/' + el.dataset.id, undefined, 'DELETE'); go('trend'); },
-  play: el => { $('#modalbox').innerHTML = `<iframe width="100%" height="360" src="https://www.youtube.com/embed/${encodeURIComponent(el.dataset.v)}" allow="autoplay; encrypted-media" allowfullscreen></iframe><div class="row"><button data-act="closemodal">Zatvori</button></div>`; $('#modal').classList.remove('hidden'); },
   // settings
   saveset: saveSettings,
   scan: async () => { await saveSettings(); await api('/api/scan', {}); toast('Skeniranje pokrenuto'); },
@@ -625,105 +569,14 @@ api('/api/styles').then(s => state.styleLabels = s).catch(() => {});
 api('/api/settings').then(s => { state.strict = s.style_strictness || 'normalno'; }).catch(() => {}).finally(() => go('sada'));
 
 
-pages.audio = async () => {
-  const s = await api('/api/audio/chorus/status'), o=s.settings;
-  $('#main').innerHTML = `<h2>Audio ritam — ista ili slicna muzika</h2>
-  <p>Indeks muzickih fraza: <b>${s.counts.ok || 0}</b> pesama; greske: ${s.counts.error || 0}. Ova verzija proverava muzicke fraze kroz celu pesmu. Za nove osobine pokreni Start; stari ritam ostaje sacuvan. Model je ukljucen u EXE i radi offline.</p>
-  <div class="card"><h3>Skeniraj celu biblioteku</h3><p id="scanRuntime" class="small mut">Status radnika se ucitava...</p><details><summary>Preskocene pesme / greske</summary><div id="scanSkipped" class="small mut"></div></details>${scanButtons('chorus_library')}<p>Start nastavlja od novih ili promenjenih pesama. Stop cuva zavrsene rezultate. Traktor kolekcija i audio fajlovi se samo citaju.</p></div>
-  <div class="card"><h3>Audio baza — prenos PC / laptop</h3><p id="audioDbPath" class="small mut"></p>
-  <div class="row"><button data-act="cacheexport">Izvezi audio bazu</button><button data-act="cachepick">Uvezi audio bazu</button><button data-act="cachecheck">Proveri skenirano (bez skena)</button></div>
-  <p class="small mut">Prenose se potpisi, bez muzike. Isti fajl se povezuje SHA256 proverom, nezavisno od putanje. Promenjen fajl ili model ne prolazi kao kompatibilan.</p>
-  <details><summary>Relocate — fajlovi su u drugom folderu</summary><textarea id="cacheRoots" placeholder="Novi muzicki folder, jedan po redu"></textarea><button data-act="cacherelocate">Relocate / izaberi audio bazu</button><p class="small mut">Izaberi izvezenu .djaudio bazu. Trazi se identican sadrzaj u navedenim folderima i popravlja nedvosmislena nedostajuca putanja u Assistantu. Traktor fajlovi se ne menjaju.</p></details>
-  <input id="cacheFile" type="file" accept=".djaudio" hidden><p id="cacheJobState"></p><button id="cacheStop" data-act="cachestop" disabled>Stop prenosa</button><div id="cacheTransferState"></div>
-  <div class="row"><input id="cacheQuery" placeholder="Pesma, putanja ili status skena"><button data-act="cachecheck">Proveri</button><button data-act="cacheprev">Prethodnih 200</button><button data-act="cachenext">Sledecih 200</button></div><div id="cacheCheckResults"></div></div>
-  <div class="card"><h3>Automatski peti predlog i LIVE lista</h3>
-  <label><input id="chorusLive" type="checkbox" ${o.live_scan?'checked':''}> Live scan: <b id="liveScanLabel">${o.live_scan?'ON':'OFF'}</b> — analiziraj neskeniranu pesmu pri ucitavanju</label><p class="mut small">OFF: nema automatskog audio skena. Pretraga sacuvane baze i tvoja istorija rade normalno. Start za celu biblioteku radi nezavisno.</p>
-  <p><label><input id="chorusWhole" type="checkbox" ${o.whole_library!==false?'checked':''}> Trazi audio veze u celoj biblioteci, nezavisno od key-a, tagova i zanra</label></p>
-  <div class="row"><label><input id="chorusRhythm" type="checkbox" ${o.rhythm?'checked':''}> Ritam cele pesme (drugi nivo)</label><input id="chorusR" type="number" min="50" max="100" value="${o.rhythm_cutoff}" style="width:80px"> %</div>
-  <p><label><input id="chorusLearned" type="checkbox" ${o.learned_model!==false?'checked':''}> AI pomoc pri pronalazenju kandidata</label> · sam AI skor ne odlucuje o poklapanju</p>
-  <div class="row"><label>AI kratke fraze — eksperimentalni prag</label><input id="chorusPeriodic" type="number" min="50" max="100" value="${o.periodic_cutoff||62}" style="width:80px"></div><p class="mut small">Ritam ukljucuje i AI fraze. Skor nije procenat sigurnosti; kontrola izmesanog redosleda mora imati najmanje 4 poena manje. Novi sken je potreban. Model nije dodatno treniran.</p>
-  <div class="row"><label><input id="chorusTonal" type="checkbox" ${o.tonal?'checked':''}> Zajednicka muzika / fraza (prvi nivo)</label><input id="chorusT" type="number" min="50" max="100" value="${o.tonal_cutoff}" style="width:80px"> %</div>
-  <p>Redosled: 1. potvrdjeno poklapanje muzicke fraze, bez obzira na tekst i jezik; 2. prihvatljiv ritam cele pesme iz skenirane baze; 3. izvorni peti predlog samo levo. LIVE prikazuje do 10 rezultata iz prvog uspesnog nivoa i ne dopunjava se slabim pesmama.</p>
-  <button class="pri" data-act="chorussave">Sacuvaj audio uslove</button></div>
-  <div class="card"><h3>Sta je pronadjeno za trenutnu pesmu?</h3><p id="autoAudioState"></p><div id="autoAudioResults"></div></div>
-  <details><summary>Kako se bira deo / ogranicenja</summary><p>Cue refren / chorus / hook pomaze AI indeksiranju. Dodatna provera muzicke fraze i audio fragmenata pretrazuje celu pesmu, ukljucujuci deo van cue-a. Prikazuju se vremenski intervali. Traktor waveform kes se ne cita; talas i osobine izvode se iz audija.</p><p>${esc(s.note)} Prva cetiri predloga ostaju ista. Peti i LIVE koriste isti audio skup, bez ponavljanja; zabrane i vec pustene pesme ostaju iskljucene.</p></details>`;
-  updateScanControls(state.status?.job || {});
-  async function poll(){
-    const [status,d]=await Promise.all([api('/api/audio/chorus/status'),api('/api/audio/chorus/results')]);
-    await refreshCacheTransfer();
-    if(state.page!=='audio')return;
-    $('#autoAudioState').textContent=[status.live.phase,status.live.error,status.live.cue_warning].filter(Boolean).join(' · ');
-    const report=d.audio_diagnostics||{};
-    $('#autoAudioResults').innerHTML=(d.current?'<p><b>'+name(d.current)+'</b></p>':'')+audioDiagnosticHtml(report);
-  }
-  await poll();state.timer=setInterval(()=>poll().catch(()=>{}),2500);
-};
-actions.chorussave=async()=>{await api('/api/audio/chorus/settings',{live_scan:$('#chorusLive').checked,whole_library:$('#chorusWhole').checked,learned_model:$('#chorusLearned').checked,rhythm:$('#chorusRhythm').checked,tonal:$('#chorusTonal').checked,rhythm_cutoff:+$('#chorusR').value,tonal_cutoff:+$('#chorusT').value,periodic_cutoff:+$('#chorusPeriodic').value});toast('Audio uslovi sacuvani');};
-
-function audioDiagnosticHtml(d) {
-  if (!d || !d.current_id) return '';
-  if (d.engine==='chorus') return `<details class="card" open><summary>Audio ritam / refren — nalaz</summary>
-  <p>${d.learned_model?.available?'Obuceni model: Discogs-VINet (offline).':'AI model nije dostupan u ovoj verziji.'} AI sluzi za izbor kandidata; fraza se proverava nezavisno.</p>
-  <p>Fraza → ritam cele pesme → izvorni peti. Izabrani nivo: <b>${esc(({chorus:'Zajednicka muzika',whole_rhythm:'Ritam cele pesme',normal:'Izvorni predlog'})[d.selected_stage]||'Izvorni predlog')}</b>. Prag fraze ${d.options.tonal_cutoff}%; prag ritma ${d.options.rhythm_cutoff}%.</p>
-  ${d.current_error?'<p>'+esc(d.current_error)+'</p>':''}
-  ${(d.sections||[]).map(s=>`<p>Izvor ${timecode(s.start)}–${timecode(s.end)} · ${esc(s.reason)}</p>`).join('')}
-  <p>${d.options.whole_library?'Biblioteka bez key/genre filtera':'Izvorni filteri'}: ${d.pool}; audio uporedjeno ${d.compared}. Tonalno: detaljna provera do ${d.shortlist_limit} kandidata iz cele indeksirane biblioteke.</p>
-  ${(d.top||[]).map(t=>`<p>${name(t)} — <b>${esc(t.match_kind)}</b> · R ${t.rhythm_score.toFixed(1)}% / motiv ${t.tonal_checked===false?'nije provereno':t.tonal_score.toFixed(1)+'%'}  · AI ${(t.neural_score||0).toFixed(1)}% · ritam ${timecode(t.target_section.start)}–${timecode(t.target_section.end)}${t.tonal_target_section?' · fraza '+timecode(t.tonal_target_section.start)+'–'+timecode(t.tonal_target_section.end):''}${t.phrase_verification?' · trajanje '+t.phrase_verification.seconds+'s · redosled '+Math.round(t.phrase_verification.density*100)+'% · kontrast '+t.phrase_verification.contrast+'x':''}</p>`).join('') || '<p>Nema audio rezultata.</p>'}</details>`;
-  return `<details class="card"><summary>Zasto jeste / nije izabran AUDIO RITAM?</summary>
-  <p>Prag: ${(d.threshold*100).toFixed(0)}%; kandidata posle izvornih filtera: ${d.pool}; audio uporedjeno: ${d.compared}.</p>
-  ${d.current_error ? '<p>' + esc(d.current_error) + '</p>' : `<p>Trenutna pesma, audio: ${d.current_audio.bpm} BPM; periodicnost ${d.current_audio.periodicity}; stabilnost ${d.current_audio.consistency}; promenljiv tempo: ${d.current_audio.variable_tempo_suspected ? 'sumnja' : 'ne'}.</p>`}
-  ${Object.entries(d.counts || {}).map(([k,v]) => `<div>${esc(k)}: ${v}</div>`).join('')}
-  ${d.top.length ? '<p>Najblizi u ovom skupu:</p>' + d.top.map(t => `<div>${name(t)} — ${t.score.toFixed(2)}%: ${t.accepted ? 'prolazi audio uslove' : esc(t.reasons.join('; '))}</div>`).join('') : ''}</details>`;
-}
-
-async function audioLoadSources(preferred) {
-  const q = $('#audioQuery')?.value || '';
-  const rows = await api('/api/audio/tracks?q=' + encodeURIComponent(q));
-  const id = Number(preferred || $('#audioSource')?.value || state.audioSource || 0);
-  if (id && !rows.some(t => t.id === id)) {
-    const track = await api('/api/track/' + id);
-    if (track) rows.unshift(track);
-  }
-  $('#audioSource').innerHTML = rows.map(t => `<option value="${t.id}" ${t.id === id ? 'selected' : ''}>${name(t)}</option>`).join('');
-  if (!rows.length) $('#audioResults').textContent = 'Nema skeniranih pesama za tu pretragu.';
-}
-
-async function audioLoadMatches() {
-  const id = +$('#audioSource').value;
-  if (!id) return;
-  const cutoff = +$('#audioThresholdNumber').value / 100;
-  $('#audioResults').textContent = 'Poredim sacuvane audio obrasce...';
-  state.audioSource = id;
-  const d = await api(`/api/audio/matches?track_id=${id}&threshold=${cutoff}`);
-  if (state.page !== 'audio' || +$('#audioSource').value !== id) return;
-  state.audioReport = d;
-  $('#audioResults').innerHTML = `<h3>${name(d.current)}</h3><p>${esc(d.scope)}</p>
-  <p>Prag pregleda: ${(d.threshold*100).toFixed(0)}%; sacuvani prag preporuka: ${(d.saved_threshold*100).toFixed(0)}%. Uporedjeno: ${d.compared}/${d.pool}; audio uslove prolazi: <b>${d.accepted_total}</b>.</p>
-  ${d.current_error ? '<p>' + esc(d.current_error) + '</p>' : ''}
-  <button data-act="audiocopyreport">Kopiraj audio izvestaj</button>
-  ${audioDiagnosticHtml(d.recommendation)}
-  <h3>Pronadjena audio poklapanja pri ovom pragu</h3>
-  ${d.accepted_items.length ? d.accepted_items.map(t => `<div>${name(t)} — <b>${t.score.toFixed(2)}%</b></div>`).join('') : '<p>Nema rezultata koji prolaze sve audio uslove.</p>'}
-  <h3>Najblizi rezultati i razlozi odbacivanja</h3><p>Do 50 najblizih audio rezultata. Odbaceni su vidljivi radi provere, ali nisu automatski predlozi.</p>
-  <div style="overflow-x:auto"><table><thead><tr><th>Pesma</th><th>Audio slicnost</th><th>Obrazac udaraca</th><th>Audio BPM</th><th>Razlika tempa</th><th>Nalaz</th></tr></thead><tbody>
-  ${d.items.map(t => `<tr><td>${name(t)}<div class="row"><button class="sm" data-act="copysong" data-id="${t.id}">Copy Song</button><button class="sm" data-act="dragsong" data-id="${t.id}">Prevuci</button><button class="sm" data-act="reveal" data-id="${t.id}">Explorer</button></div></td><td><b>${t.score.toFixed(2)}%</b></td><td>${t.groove.toFixed(2)}%</td><td>${t.audio.bpm}</td><td>${t.tempo_delta.toFixed(2)}%</td><td>${t.accepted ? '<span class="badge ok">PROLAZI AUDIO USLOVE</span>' : esc(t.reasons.join('; '))}</td></tr>`).join('')}</tbody></table></div>`;
-}
-
-document.addEventListener('input', e => {
-  if (e.target.id === 'audioThresholdRange') $('#audioThresholdNumber').value = e.target.value;
-  if (e.target.id === 'audioThresholdNumber') $('#audioThresholdRange').value = e.target.value;
-});
-document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.target.id === 'audioQuery') guard(audioLoadSources)();
-});
+function audioDiagnosticHtml(){return '';}
 
 pages.grids = async () => {
   const d = await api('/api/grids');
   state.gridItems = d.items;
   $('#main').innerHTML = `<h2>Fleksibilni beatgridovi</h2>
   <button class="pri" data-act="gridscan" data-scan-start="grid_meta">Proveri gridove iz collection.nml</button>
-  <h3>Audio pretraga promenljivog tempa</h3>${scanButtons('grid_audio')}
-  <p>Provera NML cita Traktor markere. Audio pretraga koristi postojeci deep scan i obradjuje samo nove ili izmenjene fajlove. Audio nalaz je sumnja na promenljiv tempo, ne automatska popravka gridova.</p>
+  <p>Provera NML cita Traktor markere. Lite cita samo Traktor grid markere, bez analize zvuka.</p>
   <p>${d.items.length} pesama; ${d.nml_checked ? 'NML provera postoji' : 'pokreni proveru za detalje BPM markera'}.</p>
   <input id="gridQuery" placeholder="Pretrazi pronadjene fleksibilne gridove po nazivu / izvodjacu" style="width:100%;margin-bottom:12px">
   <div id="gridResults"></div>`;
@@ -734,8 +587,8 @@ pages.grids = async () => {
 function renderGridResults(query) {
   const q = query.toLocaleLowerCase();
   const items = (state.gridItems || []).filter(t => `${t.artist} ${t.title}`.toLocaleLowerCase().includes(q));
-  $('#gridResults').innerHTML = `<p>Prikazano: ${items.length}</p><table><thead><tr><th>Pesma</th><th>Markeri / BPM vrednosti</th><th>Nalaz</th><th>Audio</th><th></th></tr></thead><tbody>
-  ${items.map(t => `<tr><td>${name(t)}</td><td>${t.grid_markers_checked || 0} / ${t.grid_bpm_values ?? '?'}</td><td>${esc(t.grid_reason)}</td><td>${t.audio_variable ? 'sumnja na promenu tempa' : 'nema audio potvrde promene'}</td><td><button data-act="reveal" data-id="${t.id}">Explorer</button></td></tr>`).join('')}</tbody></table>`;
+  $('#gridResults').innerHTML = `<p>Prikazano: ${items.length}</p><table><thead><tr><th>Pesma</th><th>Markeri / BPM vrednosti</th><th>Nalaz</th><th></th></tr></thead><tbody>
+  ${items.map(t => `<tr><td>${name(t)}</td><td>${t.grid_markers_checked || 0} / ${t.grid_bpm_values ?? '?'}</td><td>${esc(t.grid_reason)}</td><td><button data-act="reveal" data-id="${t.id}">Explorer</button></td></tr>`).join('')}</tbody></table>`;
 }
 
 function scanButtons(kind) {
@@ -756,18 +609,18 @@ function updateScanControls(job) {
 
 function renderLiveAudio(data) {
   const element=$('#liveaudio');if(!element)return;
-  const report=data.audio_diagnostics||{},audio=(report.accepted_top||[]).slice(0,3),history=data.history_context||{before:[],after:[]};
+  const audio=(data.additional||[]).slice(0,3),history=data.history_context||{before:[],after:[]};
   element.className='live-content';
   const actions=t=>`<div class="live-actions"><button data-act="copysong" data-id="${t.id}" title="Copy Song">Copy</button><button data-act="dragsong" data-id="${t.id}">Prevuci</button><button data-act="reveal" data-id="${t.id}">Fajl</button></div>`;
   const row=(t,i,kind)=>{
-    if(!t)return `<div class="live-audio-item live-empty"><span class="live-number">${i+1}</span><span class="mut">${kind==='audio'?'Nema potvrdjenog audio rezultata':'Nema dovoljno podataka u listama'}</span></div>`;
-    const detail=kind==='audio'?(t.phrase_verification? (t.phrase_verification.kind==='periodic'?'AI fraza · TEST':t.phrase_verification.seconds.toFixed(1)+'s zajednicke muzike'):t.match_kind||'Audio ritam'):`${t.times}× u ${t.lists} lista`;
+    if(!t)return `<div class="live-audio-item live-empty"><span class="live-number">${i+1}</span><span class="mut">${kind==='audio'?'Nema dodatnog predloga koji prolazi uslove':'Nema dovoljno podataka u listama'}</span></div>`;
+    const detail=kind==='audio'?(t.style_label||t.label||'Osnovni algoritam'):`${t.times}× u ${t.lists} lista`;
     const score=kind==='audio'?t.score.toFixed(1):t.times+'×';
     const tip=kind==='audio'?detail:(t.sources||[]).join(' · ');
     return `<div class="live-audio-item ${kind==='audio'?'audio-match':'history-match'}" data-history-side="${kind}"><span class="live-number">${i+1}</span><div class="live-item-body"><div class="live-title" title="${esc((t.artist?t.artist+' - ':'')+t.title)}">${name(t)}</div><div class="live-secondary"><span title="${esc(tip)}">${esc(detail)}</span>${actions(t)}</div></div><span class="live-score">${esc(score)}</span></div>`;
   };
   const group=(label,items,kind)=>`<section class="live-group" data-live-group="${kind}"><h4>${label}</h4><div class="live-group-rows">${Array.from({length:3},(_,i)=>row(items[i],i,kind)).join('')}</div></section>`;
-  element.innerHTML=`<div class="live-context"><span>3 audio · 3 PRE · 3 POSLE</span><span>${report.complete===false?'audio provera u toku':'za trenutnu pesmu'}</span><p class="sr-only">${data.current?name(data.current):''}</p></div><div class="live-list live-context-list">${group('AUDIO — ZAJEDNICKA MUZIKA',audio,'audio')}${group('PRE',history.before||[],'before')}${group('POSLE',history.after||[],'after')}</div>`;
+  element.innerHTML=`<div class="live-context"><span>3 predloga · 3 PRE · 3 POSLE</span><span>za trenutnu pesmu</span><p class="sr-only">${data.current?name(data.current):''}</p></div><div class="live-list live-context-list">${group('DODATNI PREDLOZI',audio,'audio')}${group('PRE',history.before||[],'before')}${group('POSLE',history.after||[],'after')}</div>`;
 }
 
 document.addEventListener('input', e => {
@@ -776,11 +629,6 @@ document.addEventListener('input', e => {
 
 
 // ---------- Learnable native shortcuts ----------
-function midiBindingText(b) {
-  if (!b) return 'Nije dodeljeno';
-  const token = t => `${t[0] === 'note' ? 'Note' : 'CC'} ${t[2]} / kanal ${t[1]+1}`;
-  return (b.modifier ? token(b.modifier)+' + ' : '')+token(b.button);
-}
 function highlightShortcut() {
   const t = (state.shortcutItems || [])[state.shortcutIndex || 0];
   $$('[data-shortcut-id]').forEach(el => el.classList.toggle('shortcut-selected', !!t && +el.dataset.shortcutId === t.id));
@@ -790,59 +638,17 @@ function cancelShortcutLearn() {
   return api('/api/shortcuts/learn/cancel', {}).catch(() => {});
 }
 function shortcutStatusText(d) {
-  const l = d.learning;
-  const prompt = l ? (l.combination ? (l.modifier ? 'Drzi prvo dugme i pritisni drugo.' : 'Pritisni i drzi Shift/DEL, zatim drugo dugme.') : 'Pritisni zeljeno dugme.') : '';
-  if ($('#shortcutStatus')) $('#shortcutStatus').textContent = [state.keyLearn ? 'Pritisni kombinaciju na tastaturi. Esc = otkazi.' : prompt,
-    d.connected ? 'MIDI povezan.' : 'MIDI nije povezan.', d.last_midi ? 'Poslednji signal: '+d.last_midi : '',
-    d.learning_error, d.midi_error, d.keyboard_error].filter(Boolean).join(' ');
-  Object.keys(d.actions || {}).forEach(a => {
-    const key = document.getElementById('key_'+a), midi = document.getElementById('midi_'+a);
-    if (key) key.textContent = d.settings.keyboard[a]?.label || 'Nije dodeljeno';
-    if (midi) midi.textContent = midiBindingText(d.settings.midi[a]);
-  });
+  if ($('#shortcutStatus')) $('#shortcutStatus').textContent = state.keyLearn ? 'Pritisni kombinaciju na tastaturi. Esc = otkazi.' : d.keyboard_error || '';
+  Object.keys(d.actions || {}).forEach(a => { const key=document.getElementById('key_'+a); if(key)key.textContent=d.settings.keyboard[a]?.label||'Nije dodeljeno'; });
 }
 pages.shortcuts = async () => {
-  const d = await api('/api/shortcuts');
-  $('#main').innerHTML = `<h2>Precice — tastatura i kontroler</h2>
-  <p>Svaka radnja ima odvojeno ucenje. Prikaz/minimizacija radi globalno, pa Ctrl+X vraca i minimizovan prozor. Ostale tastaturne precice rade u Traktoru i Assistantu. Pri kucanju u Assistantu precice miruju. Postavke se cuvaju automatski.</p>
-  <div class="card"><label><input type="checkbox" id="keyboardEnabled" ${d.settings.keyboard_enabled ? 'checked' : ''}> Tastaturne precice ukljucene</label>
-  <div class="row"><select id="midiPort"><option value="">Izaberi MIDI ulaz</option></select>
-  <button data-act="shortcutports">Osvezi MIDI ulaze</button><button data-act="shortcutconnect">Povezi MIDI</button><button data-act="shortcutdisconnect">Iskljuci MIDI</button></div>
-  <p id="shortcutStatus" role="status"></p><button data-act="shortcutcancel">Otkazi ucenje</button></div>
-  <div class="scroll"><table><thead><tr><th>Radnja</th><th>Tastatura</th><th>Kontroler</th></tr></thead><tbody>
-  ${Object.entries(d.actions).map(([a,label]) => `<tr><td>${esc(label)}</td><td><b id="key_${a}"></b><div class="row">
-  <button data-act="shortcutkey" data-action="${a}">Nauci tastaturu</button><button data-act="shortcutkeyclear" data-action="${a}">Obrisi</button></div></td>
-  <td><b id="midi_${a}"></b><div><label><input type="checkbox" id="combo_${a}" checked> Shift/DEL + drugo dugme</label></div><div class="row">
-  <button data-act="shortcutmidi" data-action="${a}">Nauci kontroler</button><button data-act="shortcutmidiclear" data-action="${a}">Obrisi</button></div></td></tr>`).join('')}
-  </tbody></table></div>
-  <p class="mut">Sledeci/prethodni predlog menja samo oznaceni izbor. Copy Song kopira fajl. Prevuci otvara prozor za rucno prevlacenje. Ove radnje ne salju Load, Play ni druge komande Traktoru.</p>
-  <details class="card"><summary>Povezivanje sa Traktorom i CMD Studio 4A</summary>
-  <ol><li>Za povezivanje dok Traktor koristi kontroler napravi virtuelni port <b>DJ Assistant</b> u <a href="https://www.tobias-erichsen.de/software/loopmidi.html" target="_blank" rel="noopener">loopMIDI</a> (posebna jednokratna instalacija). Pokreni ga pre povezivanja.</li>
-  <li>U Traktor Controller Manager dodaj jos jedan <b>Generic MIDI</b> device. Originalni CMD mapping ostavi sacuvan. Za novi device stavi In-Port na CMD Studio 4A, Out-Port na DJ Assistant. Izbegni All Ports.</li>
-  <li>Dodaj <b>Add In → Modifier #1</b>, Type Button, Interaction Hold, Set to value 1. Learn pritisni na DEL/Shift dugmetu. Dodaj <b>Add Out → Modifier #1</b>, rucno dodeli kanal 16 / CC 110, Controller Range 0–1, MIDI Range 0–127, Blend iskljucen.</li>
-  <li>Za drugo dugme ponovi sa Modifier #2 i izlazom kanal 16 / CC 111. Za dodatna dugmad koristi Modifier #3–#8 i CC 112–117. Svaki ulaz je Hold, vrednost 1; izlaz mora poslati i 0 kada pustis dugme. Ne stavljaj M1 uslov na te izlaze — Assistant sam prepoznaje kombinaciju.</li>
-  <li>Ovde osvezi ulaze, izaberi DJ Assistant i Povezi MIDI. Klikni Nauci kontroler, pritisni i drzi DEL/Shift, pritisni drugo dugme, pa pusti oba. Za jedno dugme iskljuci oznaku kombinacije pre ucenja.</li></ol>
-  <p>Dodatni mapping ne uklanja postojece komande tih dugmica. Izaberi neiskoriscene tastere/kombinacije i proveri originalni mapping pre nastupa. Ako isti taster bez Shift-a vec ima komandu u Traktoru, nju moras usloviti ili iskljuciti u Traktoru. Ovo nije automatski menjanje tvog TSI mappinga.</p>
-  <p>Ako MIDI ulaz podrzava vise programa, mozes ga izabrati direktno. Ako je zauzet, koristi opisani virtuelni port. Assistant samo prima MIDI; ne prosledjuje niti salje komande na kontroler.</p></details>`;
+  const d=await api('/api/shortcuts');
+  $('#main').innerHTML=`<h2>Precice — tastatura</h2><p>Ctrl+X prikazuje i minimizuje prozor. Ostale precice rade u Assistantu i Traktoru; tokom kucanja u Assistantu miruju.</p>
+  <label><input type="checkbox" id="keyboardEnabled" ${d.settings.keyboard_enabled?'checked':''}> Tastaturne precice ukljucene</label><p id="shortcutStatus"></p>
+  <table><thead><tr><th>Radnja</th><th>Tastatura</th></tr></thead><tbody>${Object.entries(d.actions).map(([a,label])=>`<tr><td>${esc(label)}</td><td><b id="key_${a}"></b><button data-act="shortcutkey" data-action="${a}">Nauci tastaturu</button><button data-act="shortcutkeyclear" data-action="${a}">Obrisi</button></td></tr>`).join('')}</tbody></table><button data-act="shortcutcancel">Otkazi ucenje</button>`;
   shortcutStatusText(d);
-  $('#keyboardEnabled').onchange = guard(async e => { await api('/api/shortcuts/keyboard/enabled', {enabled:e.target.checked}); });
-  await actions.shortcutports(null, d.settings.midi_input);
-  state.timer = setInterval(async () => {
-    try { const result = await api('/api/shortcuts'); if (state.page === 'shortcuts') shortcutStatusText(result); } catch {}
-  }, 500);
+  $('#keyboardEnabled').onchange=guard(async e=>{await api('/api/shortcuts/keyboard/enabled',{enabled:e.target.checked});});
 };
-actions.shortcutports = async (el, saved) => {
-  const select = $('#midiPort'); if (!select) return;
-  const name = saved || select.value;
-  try {
-    const d = await api('/api/shortcuts/ports');
-    const ports = [...new Set([...(d.ports || []), ...(name ? [name] : [])])];
-    select.innerHTML = '<option value="">Izaberi MIDI ulaz</option>'+ports.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
-    select.value = name || '';
-  } catch (e) { toast(e.message, true); }
-};
-actions.shortcutconnect = async () => { shortcutStatusText(await api('/api/shortcuts/midi/connect', {name:$('#midiPort').value, enabled:true})); };
-actions.shortcutdisconnect = async () => { shortcutStatusText(await api('/api/shortcuts/midi/connect', {name:$('#midiPort').value, enabled:false})); };
 actions.shortcutkey = async el => {
   await cancelShortcutLearn();
   await api('/api/shortcuts/keyboard-learning', {enabled:true});
@@ -851,11 +657,6 @@ actions.shortcutkey = async el => {
   state.keyLearnTimer = setTimeout(() => { cancelShortcutLearn(); toast('Ucenje je isteklo. Pokreni ponovo.'); }, 29000);
 };
 actions.shortcutkeyclear = async el => { shortcutStatusText(await api('/api/shortcuts/keyboard', {action:el.dataset.action, binding:null})); };
-actions.shortcutmidi = async el => {
-  await cancelShortcutLearn();
-  shortcutStatusText(await api('/api/shortcuts/midi/learn', {action:el.dataset.action, combination:$('#combo_'+el.dataset.action).checked}));
-};
-actions.shortcutmidiclear = async el => { shortcutStatusText(await api('/api/shortcuts/midi/clear', {action:el.dataset.action})); };
 actions.shortcutcancel = async () => { await cancelShortcutLearn(); toast('Ucenje otkazano'); };
 actions.shortcutselect = el => {
   const index = (state.shortcutItems || []).findIndex(t => t.id === +el.dataset.id);
@@ -949,16 +750,6 @@ actions.consoledetails = () => consoleModal('Detalji preporuka','#suggestionDiag
 // Display automatic chorus intervals.
 const timecode=s=>Math.floor(s/60)+':'+String(Math.round(s%60)).padStart(2,'0');
 
-// Live scanning is an explicit opt-in, independent of the library Start button.
-document.addEventListener('change',e=>{
- if(e.target.id==='chorusLive')guard(async()=>{
-   const enabled=e.target.checked;
-   const saved=await api('/api/audio/chorus/settings',{live_scan:enabled});
-   $('#liveScanLabel').textContent=saved.live_scan?'ON':'OFF';
-   toast(saved.live_scan?'Live scan ukljucen':'Live scan iskljucen; koristi se sacuvana baza');
- })();
-});
-
 // User-selected playlist files remain local to the DJ computer.
 actions.learningpick=()=>$('#learningFiles').click();
 document.addEventListener('change',e=>{
@@ -975,41 +766,3 @@ document.addEventListener('change',e=>{
  })();
 });
 
-let cacheCheckOffset=0,cacheRelocateRoots=[];
-async function refreshCacheTransfer(){
- const el=$('#audioDbPath');if(!el)return;
- const d=await api('/api/audio/cache/status');
- if(state.page!=='audio'||!$('#cacheStop'))return;
- el.textContent='Baza: '+d.database_path+' | Prenos: '+d.transfer_folder;
- const job=d.job||{},active=String(job.kind||'').startsWith('audio_cache_');
- $('#cacheJobState').textContent=active?(job.error?'Greska: '+job.error:job.cancelled?'Zaustavljeno':job.phase+' · '+(job.done||0)+'/'+(job.total||0)):'';
- $('#cacheStop').disabled=!active||!job.running;$('#cacheStop').dataset.kind=job.kind||'';
- const last=d.last||{};$('#cacheTransferState').innerHTML=last.kind==='export'?'<p>Izvezeno '+last.exported+' pesama. <button data-act="cachereveal" data-token="'+esc(last.download.split('/').pop())+'">Prikazi izvezenu bazu u Exploreru</button><br><span class="small mut">'+esc(last.path)+'</span></p>':last.kind==='import'?'<p>Uvezeno: '+last.matched+' pesama · fraze '+last.chorus+' · ritam '+last.rhythm+' · Relocate '+last.relocated+' · nepronadjeno '+last.not_found+' · nekompatibilnih podataka '+last.incompatible+'</p>':'';
-}
-actions.cachereveal=async el=>{await api('/api/audio/cache/reveal/'+encodeURIComponent(el.dataset.token),{});};
-actions.cacheexport=async()=>{await api('/api/audio/cache/export',{});toast('Izvoz baze pokrenut');};
-actions.cachepick=()=>{cacheRelocateRoots=[];$('#cacheFile').click();};
-actions.cacherelocate=()=>{cacheRelocateRoots=$('#cacheRoots').value.split('\n').map(v=>v.trim()).filter(Boolean);if(!cacheRelocateRoots.length){toast('Unesi novi muzicki folder.',true);return;}$('#cacheFile').click();};
-actions.cachestop=async()=>{await api('/api/job/stop',{kind:$('#cacheStop').dataset.kind});toast('Zaustavljam prenos');};
-actions.cachecheck=async(el)=>{
- if(el)cacheCheckOffset=0;
- const d=await api('/api/audio/cache/check?q='+encodeURIComponent($('#cacheQuery').value)+'&offset='+cacheCheckOffset);
- $('#cacheCheckResults').innerHTML='<p>'+Object.entries(d.counts).map(([k,v])=>esc(k)+': '+v).join(' · ')+'</p><p>'+d.total+' rezultata · '+d.offset+'–'+(d.offset+d.rows.length)+'</p><table><tr><th>Pesma</th><th>Status</th><th>Putanja</th></tr>'+d.rows.map(t=>'<tr><td>'+name(t)+'</td><td>'+esc(t.state)+(t.rhythm_ready?' · ritam sacuvan':'')+'</td><td class="small">'+esc(t.path||'')+'</td></tr>').join('')+'</table>';
-};
-actions.cacheprev=async()=>{cacheCheckOffset=Math.max(0,cacheCheckOffset-200);await actions.cachecheck();};
-actions.cachenext=async()=>{cacheCheckOffset+=200;await actions.cachecheck();};
-document.addEventListener('change',e=>{
- if(e.target.id!=='cacheFile')return;
- const file=e.target.files?.[0];e.target.value='';if(!file)return;
- guard(async()=>{
-  if(file.size>1024*1024*1024)throw Error('Najvise 1 GB.');
-  const response=await fetch('/api/audio/cache/import?roots='+encodeURIComponent(JSON.stringify(cacheRelocateRoots)),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});
-  const result=await response.json();if(!response.ok)throw Error(result.detail||'Uvoz nije pokrenut.');toast('Uvoz / Relocate baze pokrenut');
- })();
-});
-
-actions.saveperformance=async()=>{const d=await api('/api/performance',{gig_mode:$('#gigMode').checked,audio_workers:+$('#audioWorkers').value,scan_turbo:$('#scanTurbo').checked});acceptPerformance(d);toast(d.gig_mode?'Gig mod ukljucen':'Gig mod iskljucen');};
-
-actions.togglegig=async()=>{const d=await api('/api/performance',{gig_mode:!state.status?.gig_mode});acceptPerformance(d);toast(d.gig_mode?'Gig mod ukljucen — sken pauziran, AI iz baze radi':'Gig mod iskljucen');};
-
-function acceptPerformance(d){state.performanceEpoch=(state.performanceEpoch||0)+1;state.status={...state.status,...d};if($('#gigLabel'))$('#gigLabel').textContent=d.gig_mode?'ON':'OFF';}

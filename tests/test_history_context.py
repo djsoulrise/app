@@ -51,7 +51,7 @@ class HistoryContextTests(unittest.TestCase):
         self.assertEqual(again['before'],[]);self.assertEqual(again['after'],[])
 
     def test_http_context_is_added_without_changing_left_recommendations(self):
-        fixture={'items':[{'id':20},{'id':21},{'id':22},{'id':23},{'id':24}],'audio_diagnostics':{'accepted_top':[{'id':2}]}}
+        fixture={'items':[{'id':20},{'id':21},{'id':22},{'id':23},{'id':24}],'additional':[{'id':2}]}
         with patch.object(suggest,'suggest',return_value=fixture.copy()):
             client=TestClient(app,client=('127.0.0.1',50000))
             response=client.get('/api/suggest?track_id=1').json();client.close()

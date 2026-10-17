@@ -16,7 +16,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import performance, audio_cache_transfer, learning_import, history_context, event_exports, auto_audio, chorus, shortcuts, native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
+from . import learning_import, history_context, event_exports, shortcuts, native_files, grid_scan, config, db, duplicates, library, nowplaying, playlists, styles, suggest
 from .config import DATA, SETTINGS
 from .scan_control import ScanCancelled
 from .keys import key_score
@@ -48,8 +48,6 @@ def guest_url() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init()
-    from . import performance
-    performance.low_priority()
     if not db.one("SELECT 1 FROM events WHERE active=1"):
         db.conn().execute("INSERT INTO events(name, date, active) VALUES(?,?,1)",
                           (f"Vece {datetime.now():%d.%m.%Y}", datetime.now().date().isoformat()))
@@ -58,11 +56,10 @@ async def lifespan(app: FastAPI):
     print(f"\n  DJ asistent: http://127.0.0.1:{SETTINGS['port']}   |  tablet PIN: {SETTINGS['dj_pin']}"
           f"  (http://{lan_ip()}:{SETTINGS['port']}/login?pin=...)\n  Gosti: {guest_url()}\n")
     yield
-    auto_audio.STOP.set()
     JOB_STOP.set()
 
 
-app = FastAPI(title="DJ Miljan Assistant", lifespan=lifespan)
+app = FastAPI(title="DJ Miljan Assistant Lite", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -105,9 +102,6 @@ def _progress(done, total, msg):
 
 
 def start_job(name: str, fn, kind=None, cancellable=False) -> dict:
-    from . import performance
-    if performance.enabled() and kind in ('audio','chorus_library','grid_audio','grid_meta'):
-        raise HTTPException(409,'Gig mod je ukljucen; iskljuci ga pre skeniranja.')
     with JOB_LOCK:
         if JOB['running']:
             raise HTTPException(409, 'Posao je vec u toku.')
@@ -125,7 +119,6 @@ def start_job(name: str, fn, kind=None, cancellable=False) -> dict:
             text=traceback.format_exc()
             (folder/'last-job-error.txt').write_text(text,encoding='utf-8')
             JOB['error_details']=text
-            JOB['runtime']=performance.runtime_status()
         finally:
             JOB['running'] = False
     threading.Thread(target=run, daemon=True).start()
@@ -170,41 +163,32 @@ def refresh():
 def status():
     c = db.one("SELECT COUNT(*) n, SUM(on_disk) disk, SUM(in_traktor) trk, SUM(flex_grid) flex FROM tracks")
     cur = nowplaying.STATE
-    return {"gig_mode":bool(SETTINGS.get("gig_mode",False)), "audio_workers":performance.workers(), "scan_turbo":bool(SETTINGS.get("scan_turbo",False)), "cpu_count":os.cpu_count() or 1, "scan_runtime":auto_audio.SCAN_STATE, "job": JOB, "counts": c, "now": cur, "broadcast": nowplaying.BROADCAST, "history": nowplaying.HISTORY,
-            "ai": ai.available(), "fpcalc": duplicates._fpcalc() is not None, "guest_url": guest_url(),
-            "event": db.one("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1"),
-            "audio_revision": f"{audio_rhythm.SCAN_REVISION}:{auto_audio.REVISION}", "audio_threshold": json.dumps(auto_audio.settings(),sort_keys=True)}
+    return {"edition":"lite", "job":JOB, "counts":c, "now":cur,
+            "broadcast":nowplaying.BROADCAST, "history":nowplaying.HISTORY,
+            "ai":False, "fpcalc":False, "guest_url":guest_url(),
+            "event":db.one("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1")}
+
 
 
 # ---------- settings ----------
 
 SETTING_KEYS = ["music_folders", "nml_path", "history_dir", "dupes_dir", "export_dir", "main_folder_hint", "port",
-                "broadcast_enabled", "broadcast_port", "model", "weights", "mode", "style_strictness", "guest_limit", "tip_text",
-                "tip_ips_payload", "audience", "audio_similarity_threshold"]
+                "broadcast_enabled", "broadcast_port", "weights", "mode", "style_strictness", "guest_limit", "tip_text",
+                "tip_ips_payload", "audience"]
 
 
 @app.get("/api/settings")
 def get_settings(request: Request):
     s = {k: SETTINGS[k] for k in SETTING_KEYS}
-    s["anthropic_key_set"] = bool(SETTINGS["anthropic_key"])
     s["dj_pin"] = SETTINGS["dj_pin"] if _local(request) else ""
     return s
 
 
 @app.post("/api/settings")
 def set_settings(body: dict = Body(...)):
-    if 'audio_similarity_threshold' in body:
-        try:
-            body['audio_similarity_threshold'] = audio_rhythm.threshold(body['audio_similarity_threshold'])
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(400, str(exc))
     for k in SETTING_KEYS:
         if k in body:
             SETTINGS[k] = body[k]
-    if body.get("anthropic_key"):
-        SETTINGS["anthropic_key"] = body["anthropic_key"].strip()
-    if body.get("clear_key"):
-        SETTINGS["anthropic_key"] = ""
     config.save(SETTINGS)
     return {"ok": True}
 
@@ -360,12 +344,6 @@ def delete_tag(body: dict = Body(...)):
     return {"ok": True}
 
 
-@app.post("/api/ai/tag-suggest")
-def ai_tag_suggest():
-    try:
-        return {"added": ai.suggest_tags()}
-    except ai.AIError as e:
-        raise HTTPException(400, str(e))
 
 
 @app.get("/api/tag-suggestions")
@@ -428,8 +406,7 @@ def style_list():
 @app.get("/api/suggest")
 def get_suggest(track_id: int, mode: str | None = None, strict: str | None = None):
     result=suggest.suggest(track_id, mode, strict=strict)
-    audio=result.get('audio_diagnostics',{}).get('accepted_top',[])[:3]
-    result['history_context']=history_context.neighbors(track_id,{t['id'] for t in audio})
+    result['history_context']=history_context.neighbors(track_id,{t['id'] for t in result.get('additional',[])})
     return result
 
 
@@ -478,65 +455,16 @@ def rebuild():
     return {"ok": True}
 
 
-@app.get('/api/audio/cache/status')
-def audio_cache_status(request: Request):
-    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
-    return {**audio_cache_transfer.status(),'job':JOB}
 
 
-@app.get('/api/audio/cache/check')
-def audio_cache_check(request: Request, q: str='', offset: int=0):
-    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
-    return audio_cache_transfer.check(q,offset)
 
 
-@app.post('/api/audio/cache/export')
-def audio_cache_export(request: Request):
-    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
-    return start_job('Izvoz audio baze',lambda:audio_cache_transfer.export(_progress,JOB_STOP),kind='audio_cache_export',cancellable=True)
 
 
-@app.get('/api/audio/cache/download/{token}')
-def audio_cache_download(token: str, request: Request):
-    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
-    path=audio_cache_transfer.EXPORTS.get(token)
-    if not path or not path.is_file():raise HTTPException(404,'Izvoz nije dostupan; ponovi izvoz.')
-    return FileResponse(path,filename=path.name,media_type='application/gzip')
 
 
-@app.post('/api/audio/cache/reveal/{token}')
-def audio_cache_reveal(token: str, request: Request):
-    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
-    path=audio_cache_transfer.EXPORTS.get(token)
-    if not path or not path.is_file():raise HTTPException(404,'Izvoz nije dostupan.')
-    try:native_files.reveal_file(str(path))
-    except (OSError,RuntimeError) as exc:raise HTTPException(400,str(exc))
-    return {'ok':True,'path':str(path)}
 
 
-@app.post('/api/audio/cache/import')
-async def audio_cache_import(request: Request):
-    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
-    if int(request.headers.get('content-length','0'))>1024*1024*1024:raise HTTPException(413,'Najvise 1 GB.')
-    if JOB['running']:raise HTTPException(409,'Sacekaj kraj trenutnog posla ili pritisni Stop.')
-    try:
-        roots=json.loads(request.query_params.get('roots','[]'))
-        if not isinstance(roots,list) or len(roots)>20 or any(not isinstance(r,str) for r in roots):raise ValueError('Neispravni Relocate folderi.')
-    except (ValueError,TypeError) as exc:raise HTTPException(400,str(exc))
-    import tempfile
-    with tempfile.NamedTemporaryFile(suffix='.djaudio',dir=config.DATA,delete=False) as f:
-        path=f.name;total=0
-        try:
-            async for chunk in request.stream():
-                total+=len(chunk)
-                if total>1024*1024*1024:raise HTTPException(413,'Najvise 1 GB.')
-                f.write(chunk)
-            if not total:raise HTTPException(400,'Prazan fajl.')
-        except Exception:
-            f.close();os.unlink(path);raise
-    try:return start_job('Uvoz / Relocate audio baze',lambda:audio_cache_transfer.import_path(path,roots,_progress,JOB_STOP),kind='audio_cache_import',cancellable=True)
-    except Exception:
-        os.unlink(path);raise
 
 
 @app.post('/api/learning/import')
@@ -619,12 +547,6 @@ def preview_rules(body: dict = Body(...)):
 
 # ---------- AI situation ----------
 
-@app.post("/api/ai/situation")
-def ai_situation(body: dict = Body(...)):
-    try:
-        return ai.situation(body["text"], int(body.get("count") or 15))
-    except ai.AIError as e:
-        raise HTTPException(400, str(e))
 
 
 # ---------- trends ----------
@@ -653,15 +575,6 @@ def del_trend_source(sid: int):
     return {"ok": True}
 
 
-@app.post("/api/trends/fetch/{sid}")
-def trend_fetch(sid: int):
-    src = db.one("SELECT * FROM trend_sources WHERE id=?", (sid,))
-    if not src:
-        raise HTTPException(404)
-    try:
-        return {"added": trends.fetch_source(src)}
-    except Exception as e:
-        raise HTTPException(400, f"Preuzimanje nije uspelo: {e}")
 
 
 @app.post("/api/trends/items")
@@ -965,14 +878,8 @@ def guest_vote(rid: int, request: Request):
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
-@app.get("/api/audio/status")
-def audio_status():
-    return audio_rhythm.status()
 
 
-@app.post("/api/audio/scan")
-def audio_scan():
-    return start_job("Audio deep scan", lambda: audio_rhythm.scan(_progress, JOB_STOP), kind="audio", cancellable=True)
 
 
 @app.post("/api/grids/scan")
@@ -985,38 +892,12 @@ def grids_list():
     return grid_scan.results()
 
 
-@app.get("/api/audio/tracks")
-def audio_tracks(q: str = ''):
-    return audio_rhythm.scanned_tracks(q)
 
 
-@app.get("/api/audio/matches")
-def audio_matches(track_id: int, threshold: float | None = None):
-    from . import performance
-    if performance.enabled():raise HTTPException(409,'Gig mod: rucna audio poredjenja su pauzirana.')
-    try:
-        report = audio_rhythm.matches(track_id, cutoff=threshold)
-        report['recommendation'] = suggest.suggest(track_id).get('audio_diagnostics', {})
-        report['saved_threshold'] = audio_rhythm.threshold()
-        return report
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(400, str(exc))
 
 
-@app.post("/api/audio/threshold")
-def save_audio_threshold(body: dict = Body(...)):
-    try:
-        value = audio_rhythm.threshold(body['threshold'])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(400, str(exc))
-    SETTINGS['audio_similarity_threshold'] = value
-    config.save(SETTINGS)
-    return {'ok': True, 'threshold': value}
 
 
-@app.post('/api/grids/audio-search')
-def audio_grid_search():
-    return start_job('Audio pretraga promenljivog tempa', lambda: grid_scan.audio_search(_progress, JOB_STOP), kind='grid_audio', cancellable=True)
 
 
 # Native shortcuts are only configurable from this computer, never from guest/tablet clients.
@@ -1031,13 +912,6 @@ def shortcut_status(request: Request):
     return shortcuts.manager.status()
 
 
-@app.get('/api/shortcuts/ports')
-def shortcut_ports(request: Request):
-    _shortcut_local(request)
-    try:
-        return {'ports': shortcuts.manager.ports()}
-    except Exception as exc:
-        raise HTTPException(400, str(exc))
 
 
 @app.get('/api/shortcuts/events')
@@ -1051,28 +925,21 @@ def shortcut_change(operation: str, request: Request, body: dict = Body(...)):
     _shortcut_local(request)
     m = shortcuts.manager
     try:
-        if operation == 'midi/connect':
-            m.connect_midi(str(body.get('name') or ''), bool(body.get('enabled')))
-        elif operation == 'midi/learn':
-            m.learn_midi(body.get('action'), body.get('combination', True))
-        elif operation == 'midi/clear':
-            m.clear_midi(body.get('action'))
-        else:
-            with m.lock:
-                if operation == 'keyboard':
-                    m.bind_keyboard(body.get('action'), body.get('binding'))
-                elif operation == 'keyboard/enabled':
-                    m.settings['keyboard_enabled'] = bool(body.get('enabled'))
-                    m.persist()
-                elif operation == 'keyboard-learning':
-                    m.keyboard_learning_until = time.monotonic()+30 if body.get('enabled') else 0
-                elif operation == 'editing':
-                    m.editing = bool(body.get('editing'))
-                elif operation == 'learn/cancel':
-                    m.learning = None
-                    m.keyboard_learning_until = 0
-                else:
-                    raise ValueError('Nepoznata opcija precice.')
+        with m.lock:
+            if operation == 'keyboard':
+                m.bind_keyboard(body.get('action'), body.get('binding'))
+            elif operation == 'keyboard/enabled':
+                m.settings['keyboard_enabled'] = bool(body.get('enabled'))
+                m.persist()
+            elif operation == 'keyboard-learning':
+                m.keyboard_learning_until = time.monotonic()+30 if body.get('enabled') else 0
+            elif operation == 'editing':
+                m.editing = bool(body.get('editing'))
+            elif operation == 'learn/cancel':
+                m.learning = None
+                m.keyboard_learning_until = 0
+            else:
+                raise ValueError('Nepoznata tastaturna opcija.')
         return m.status()
     except (ValueError, TypeError, KeyError) as exc:
         raise HTTPException(400, str(exc))
@@ -1100,49 +967,9 @@ def save_ui_preferences(request: Request, body: dict = Body(...)):
     return SETTINGS['ui_preferences']
 
 
-@app.get('/api/audio/chorus/status')
-def auto_audio_status():
-    return auto_audio.status()
 
 
-@app.post('/api/audio/chorus/settings')
-def auto_audio_settings(request: Request, body: dict = Body(...)):
-    _shortcut_local(request)
-    try: return auto_audio.settings(body)
-    except (ValueError,TypeError) as exc: raise HTTPException(400,str(exc))
 
 
-@app.post('/api/audio/chorus/scan')
-def auto_audio_scan(request: Request):
-    _shortcut_local(request)
-    return start_job('Audio ritam / refren biblioteke',lambda:auto_audio.scan(_progress,JOB_STOP),kind='chorus_library',cancellable=True)
 
 
-@app.get('/api/audio/chorus/results')
-def auto_audio_results():
-    tid=nowplaying.STATE.get('track_id')
-    if not tid: return {'items':[], 'audio_diagnostics':{}, 'audio_status':'Nema trenutne pesme u Traktoru.'}
-    return suggest.suggest(tid)
-
-
-@app.post('/api/performance')
-def performance_settings(request: Request, body: dict = Body(...)):
-    if not _local(request):raise HTTPException(403,'Samo lokalni racunar.')
-    from . import performance
-    if 'gig_mode' in body:
-        if not isinstance(body['gig_mode'],bool):raise HTTPException(400,'Gig mod mora biti ukljucen ili iskljucen.')
-        SETTINGS['gig_mode']=body['gig_mode']
-        if not auto_audio.RESULT:
-            auto_audio.STATE['key']=None
-            auto_audio.REVISION+=1
-        if body['gig_mode']:
-            if auto_audio.STATE.get('scanning'):auto_audio.STOP.set()
-            if JOB.get('kind') in ('audio','chorus_library','grid_audio','grid_meta'):JOB_STOP.set()
-    if 'scan_turbo' in body:
-        if not isinstance(body['scan_turbo'],bool):raise HTTPException(400,'Maksimalna brzina mora biti ukljucena ili iskljucena.')
-        SETTINGS['scan_turbo']=body['scan_turbo']
-    if 'audio_workers' in body:
-        try:SETTINGS['audio_workers']=max(1,min(os.cpu_count() or 1,int(body['audio_workers'])))
-        except (TypeError,ValueError):raise HTTPException(400,'Broj radnika mora biti ceo broj.')
-    config.save(SETTINGS)
-    return {'gig_mode':performance.enabled(),'audio_workers':performance.workers(),'scan_turbo':bool(SETTINGS.get('scan_turbo',False))}

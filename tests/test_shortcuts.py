@@ -49,42 +49,6 @@ class ShortcutsTests(unittest.TestCase):
             w.toggle();self.assertFalse(state['iconic']);self.assertEqual(state['foreground'],100)
             repaint.assert_called_once_with(w.desktop)
         self.assertEqual(calls,[6,9])
-    def test_combo_requires_hold_and_edge(self):
-        bindings={'toggle_window':{'modifier':['cc',15,110],'button':['cc',15,111]}}
-        b=sc.MidiButtons();self.assertEqual(b.update(cc(111),bindings)[0],[])
-        b.update(cc(111,0),bindings);b.update(cc(110),bindings)
-        self.assertEqual(b.update(cc(111),bindings)[0],['toggle_window'])
-        self.assertEqual(b.update(cc(111,64),bindings)[0],[])
-        b.update(cc(111,0),bindings);b.update(cc(110,0),bindings)
-        self.assertEqual(b.update(cc(111),bindings)[0],[])
-    def test_shifted_binding_wins(self):
-        b=sc.MidiButtons();bindings={'copy_song':{'button':['cc',15,111],'modifier':None},'drag_song':{'button':['cc',15,111],'modifier':['cc',15,110]}}
-        self.assertEqual(b.update(cc(111),bindings)[0],['copy_song'])
-        b.update(cc(111,0),bindings);b.update(cc(110),bindings)
-        self.assertEqual(b.update(cc(111),bindings)[0],['drag_song'])
-    def test_note_zero_velocity_releases(self):
-        b=sc.MidiButtons();bindings={'focus_search':{'button':['note',0,60]}}
-        for velocity in (127,0,127):
-            result=b.update(Msg(type='note_on',channel=0,note=60,velocity=velocity),bindings)[0]
-            self.assertEqual(result,['focus_search'] if velocity else [])
-    def test_learning_saves_without_firing(self):
-        self.m.input=object()
-        with patch.object(self.m,'fire') as fire:
-            self.m.learn_midi('toggle_window',True);self.m.on_midi(cc(110));self.m.on_midi(cc(111))
-            self.assertIsNone(self.m.learning);fire.assert_not_called()
-            self.assertEqual(self.m.settings['midi']['toggle_window']['modifier'],['cc',15,110])
-            self.m.on_midi(cc(111,0));self.m.on_midi(cc(111));self.m.on_midi(cc(111,64))
-            fire.assert_called_once_with('toggle_window')
-    def test_duplicate_midi_learning_suppresses_actions(self):
-        self.m.input=object();self.m.settings['midi']={'copy_song':{'modifier':None,'button':['cc',15,111]}}
-        with patch.object(self.m,'fire') as fire:
-            self.m.learn_midi('drag_song',False);self.m.on_midi(cc(111))
-            fire.assert_not_called();self.assertNotIn('drag_song',self.m.settings['midi'])
-            self.assertIn('vec dodeljena',self.m.learning_error)
-    def test_expired_learning_does_not_fire(self):
-        self.m.input=object();self.m.learn_midi('copy_song',False);self.m.learning['until']=0
-        with patch.object(self.m,'fire') as fire: self.m.on_midi(cc(111));fire.assert_not_called()
-        self.assertIsNone(self.m.learning)
     def test_event_order_and_native_toggle(self):
         with patch.object(self.m,'window') as window:
             self.m.fire('toggle_window');window.toggle.assert_called_once();self.assertEqual(self.m.queued(0),[])
