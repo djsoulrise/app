@@ -22,7 +22,7 @@ class TransferTests(unittest.TestCase):
   with patch.object(audio_rhythm,'decoder',side_effect=AssertionError('must not decode')),patch.object(auto_audio,'analyze',side_effect=AssertionError('must not scan')):
    result=m.apply_package(package);self.assertEqual(result['matched'],1)
    check=m.check();self.assertEqual(check['counts']['skenirano'],1);self.assertEqual(check['database_path'],str(self.root/'library.db'))
-  row=db.one('SELECT * FROM auto_chorus');self.assertEqual(row['path'],str(new));self.assertEqual(row['mtime'],2);self.assertTrue(auto_audio.valid(row,db.one('SELECT * FROM tracks')))
+  row=db.one('SELECT * FROM auto_chorus');self.assertEqual(row['path'],str(new));self.assertEqual(row['mtime'],new.stat().st_mtime_ns);self.assertTrue(auto_audio.valid(row,db.one('SELECT * FROM tracks')))
  def test_same_name_different_content_does_not_import_and_model_mismatch_is_visible(self):
   package=self.package();self.file.write_bytes(b'other file content')
   self.assertEqual(m.apply_package(package)['matched'],0)
