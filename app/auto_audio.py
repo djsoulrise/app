@@ -153,7 +153,11 @@ def refresh_cues():
     if not path or not os.path.isfile(path): return
     stat=os.stat(path);stamp=(path,stat.st_size,stat.st_mtime_ns)
     if stamp==NML_STAMP: return
-    tracks,_=nml.parse_collection(path)
+    try: tracks,_=nml.parse_collection(path)
+    except (OSError,nml.ET.ParseError):
+        STATE['cue_warning']='Cue podaci trenutno nisu dostupni; koristim audio izbor dela.'
+        return
+    STATE.pop('cue_warning',None)
     ids={t['pkey']:t['id'] for t in db.rows('SELECT id,pkey FROM tracks')}
     for track in tracks:
         tid=ids.get(track['pkey'])

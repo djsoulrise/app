@@ -100,6 +100,10 @@ class AutoChorusTests(unittest.TestCase):
   self.assertEqual(result['items'][4]['id'],10)
   self.assertEqual(result['audio_diagnostics']['accepted_top'][0]['id'],10)
   self.assertEqual(len({t['id'] for t in result['items']}),5)
+ def test_unreadable_cue_collection_keeps_audio_fallback(self):
+  broken=self.folder/'collection.nml';broken.write_text('<NML>unfinished')
+  with patch.dict(config.SETTINGS,{'nml_path':str(broken)}):auto.refresh_cues()
+  self.assertIn('audio',auto.STATE['cue_warning'])
  def test_stop_before_decode(self):
   self.track(1);stop=threading.Event();stop.set()
   with self.assertRaises(ScanCancelled):auto.scan(stop_event=stop)

@@ -644,7 +644,7 @@ pages.audio = async () => {
   async function poll(){
     const [status,d]=await Promise.all([api('/api/audio/chorus/status'),api('/api/audio/chorus/results')]);
     if(state.page!=='audio')return;
-    $('#autoAudioState').textContent=[status.live.phase,status.live.error].filter(Boolean).join(' · ');
+    $('#autoAudioState').textContent=[status.live.phase,status.live.error,status.live.cue_warning].filter(Boolean).join(' · ');
     const report=d.audio_diagnostics||{};
     $('#autoAudioResults').innerHTML=(d.current?'<p><b>'+name(d.current)+'</b></p>':'')+audioDiagnosticHtml(report);
   }
