@@ -101,7 +101,9 @@ function go(p) {
 
 async function refreshStatus() {
   try {
+    const performanceEpoch=state.performanceEpoch||0;
     const s = await api('/api/status');
+    if(performanceEpoch!==(state.performanceEpoch||0)){s.gig_mode=state.status?.gig_mode;s.audio_workers=state.status?.audio_workers;}
     const j = s.job, b = s.broadcast;
     $('#statusbar').innerHTML = `${s.gig_mode?'GIG MOD · ':''}Pesama: ${s.counts.n || 0} (Traktor ${s.counts.trk || 0}, flex ${s.counts.flex || 0}) | ` +
       `Broadcast: ${b.running ? (b.last_connect ? 'povezan' : 'ceka') : 'ugasen'} | ` +
@@ -1004,6 +1006,8 @@ document.addEventListener('change',e=>{
  })();
 });
 
-actions.saveperformance=async()=>{const d=await api('/api/performance',{gig_mode:$('#gigMode').checked,audio_workers:+$('#audioWorkers').value});toast(d.gig_mode?'Gig mod ukljucen':'Gig mod iskljucen');};
+actions.saveperformance=async()=>{const d=await api('/api/performance',{gig_mode:$('#gigMode').checked,audio_workers:+$('#audioWorkers').value});acceptPerformance(d);toast(d.gig_mode?'Gig mod ukljucen':'Gig mod iskljucen');};
 
-actions.togglegig=async()=>{const d=await api('/api/performance',{gig_mode:!state.status?.gig_mode});state.status={...state.status,...d};if($('#gigLabel'))$('#gigLabel').textContent=d.gig_mode?'ON':'OFF';toast(d.gig_mode?'Gig mod ukljucen — teski poslovi zaustavljeni':'Gig mod iskljucen');};
+actions.togglegig=async()=>{const d=await api('/api/performance',{gig_mode:!state.status?.gig_mode});acceptPerformance(d);toast(d.gig_mode?'Gig mod ukljucen — teski poslovi zaustavljeni':'Gig mod iskljucen');};
+
+function acceptPerformance(d){state.performanceEpoch=(state.performanceEpoch||0)+1;state.status={...state.status,...d};if($('#gigLabel'))$('#gigLabel').textContent=d.gig_mode?'ON':'OFF';}
