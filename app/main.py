@@ -495,6 +495,16 @@ def audio_cache_download(token: str, request: Request):
     return FileResponse(path,filename=path.name,media_type='application/gzip')
 
 
+@app.post('/api/audio/cache/reveal/{token}')
+def audio_cache_reveal(token: str, request: Request):
+    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
+    path=audio_cache_transfer.EXPORTS.get(token)
+    if not path or not path.is_file():raise HTTPException(404,'Izvoz nije dostupan.')
+    try:native_files.reveal_file(str(path))
+    except (OSError,RuntimeError) as exc:raise HTTPException(400,str(exc))
+    return {'ok':True,'path':str(path)}
+
+
 @app.post('/api/audio/cache/import')
 async def audio_cache_import(request: Request):
     if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')

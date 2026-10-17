@@ -37,6 +37,10 @@ class TransferTests(unittest.TestCase):
   from app.main import app
   with patch.object(auto_audio,'ensure',side_effect=AssertionError('must not scan')):
    local=TestClient(app,client=('127.0.0.1',2000));r=local.get('/api/audio/cache/check');self.assertEqual(r.status_code,200);self.assertEqual(r.json()['counts']['skenirano'],1)
+   m.EXPORTS['known']=self.file
+   with patch('app.native_files.reveal_file') as reveal:
+    self.assertEqual(local.post('/api/audio/cache/reveal/known').status_code,200);reveal.assert_called_once_with(str(self.file))
+   self.assertEqual(local.post('/api/audio/cache/reveal/unknown').status_code,404)
    remote=TestClient(app,client=('192.0.2.1',2000));self.assertEqual(remote.get('/api/audio/cache/check').status_code,403)
  def test_bad_format_and_stop(self):
   import gzip,threading

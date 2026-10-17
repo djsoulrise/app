@@ -969,8 +969,9 @@ async function refreshCacheTransfer(){
  const job=d.job||{},active=String(job.kind||'').startsWith('audio_cache_');
  $('#cacheJobState').textContent=active?(job.error?'Greska: '+job.error:job.cancelled?'Zaustavljeno':job.phase+' · '+(job.done||0)+'/'+(job.total||0)):'';
  $('#cacheStop').disabled=!active||!job.running;$('#cacheStop').dataset.kind=job.kind||'';
- const last=d.last||{};$('#cacheTransferState').innerHTML=last.kind==='export'?'<p>Izvezeno '+last.exported+' pesama. <a download href="'+esc(last.download)+'">Preuzmi audio bazu</a><br><span class="small mut">'+esc(last.path)+'</span></p>':last.kind==='import'?'<p>Uvezeno: '+last.matched+' pesama · fraze '+last.chorus+' · ritam '+last.rhythm+' · Relocate '+last.relocated+' · nepronadjeno '+last.not_found+' · nekompatibilnih podataka '+last.incompatible+'</p>':'';
+ const last=d.last||{};$('#cacheTransferState').innerHTML=last.kind==='export'?'<p>Izvezeno '+last.exported+' pesama. <button data-act="cachereveal" data-token="'+esc(last.download.split('/').pop())+'">Prikazi izvezenu bazu u Exploreru</button><br><span class="small mut">'+esc(last.path)+'</span></p>':last.kind==='import'?'<p>Uvezeno: '+last.matched+' pesama · fraze '+last.chorus+' · ritam '+last.rhythm+' · Relocate '+last.relocated+' · nepronadjeno '+last.not_found+' · nekompatibilnih podataka '+last.incompatible+'</p>':'';
 }
+actions.cachereveal=async el=>{await api('/api/audio/cache/reveal/'+encodeURIComponent(el.dataset.token),{});};
 actions.cacheexport=async()=>{await api('/api/audio/cache/export',{});toast('Izvoz baze pokrenut');};
 actions.cachepick=()=>{cacheRelocateRoots=[];$('#cacheFile').click();};
 actions.cacherelocate=()=>{cacheRelocateRoots=$('#cacheRoots').value.split('\n').map(v=>v.trim()).filter(Boolean);if(!cacheRelocateRoots.length){toast('Unesi novi muzicki folder.',true);return;}$('#cacheFile').click();};
