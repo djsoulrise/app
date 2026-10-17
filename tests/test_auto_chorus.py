@@ -91,10 +91,10 @@ class AutoChorusTests(unittest.TestCase):
  def test_discovery_bypasses_key_tempo_gates_without_changing_first_four(self):
   from app import suggest
   for tid in range(1,11):
-   db.conn().execute('INSERT INTO tracks(id,pkey,path,artist,title,on_disk,bpm,camelot,energy) VALUES(?,?,?,?,?,1,?,?,5)',(tid,str(tid),'unused','Artist '+str(tid),'Song '+str(tid),200 if tid==10 else 120,'1A' if tid==10 else '8A'))
+   db.conn().execute('INSERT INTO tracks(id,pkey,path,artist,title,on_disk,bpm,camelot,energy) VALUES(?,?,?,?,?,1,?,?,5)',(tid,str(tid),'unused','Artist '+chr(64+tid)*3,'Anthem '+chr(64+tid)*3,200 if tid==10 else 120,'1A' if tid==10 else '8A'))
   db.conn().commit()
   with patch.object(auto,'fifth',return_value=(None,None)): baseline=suggest.suggest(1)['items']
-  auto.RESULT={'track_id':1,'sections':[],'hits':[{'id':10,'artist':'Artist 10','title':'Song 10','rhythm_reliable':True,'rhythm_score':95.,'tonal_reliable':False,'tonal_score':0.,'score':95.,'reasons':[]}]}
+  auto.RESULT={'track_id':1,'sections':[],'hits':[{'id':10,'artist':'Artist JJJ','title':'Anthem JJJ','rhythm_reliable':True,'rhythm_score':95.,'tonal_reliable':False,'tonal_score':0.,'score':95.,'reasons':[]}]}
   with patch.object(auto,'ensure'): result=suggest.suggest(1)
   self.assertEqual([t['id'] for t in result['items'][:4]],[t['id'] for t in baseline[:4]])
   self.assertEqual(result['items'][4]['id'],10)
