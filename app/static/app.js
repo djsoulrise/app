@@ -428,10 +428,15 @@ pages.set = async () => {
       <div class="row"><label>Broadcast port</label><input id="sbp" value="${s.broadcast_port}" style="width:90px"><label><input type="checkbox" id="sbe" ${s.broadcast_enabled ? 'checked' : ''}> ukljucen (restart)</label></div></div>
     <div class="card"><h3>Tezine predloga</h3>${Object.keys(W).map(k => `<div class="row"><span style="width:240px">${W[k]}</span><input type="range" min="0" max="5" step="0.1" id="w_${k}" value="${w[k]}"><span class="small" id="wv_${k}">${w[k]}</span></div>`).join('')}
       <button data-act="saveset">Sacuvaj</button> <button data-act="rebuild">Ponovo nauci iz mojih lista</button></div>
+    <div class="card"><h3>Tri dodatna predloga desno</h3><label>Izvor <select id="externalSource"><option value="original" ${s.additional_source==='external'?'':'selected'}>Osnovni algoritam</option><option value="external" ${s.additional_source==='external'?'selected':''}>Uvezena audio baza</option></select></label>
+    <p class="small mut">Audio baza se pravi u zasebnom DJ Miljan Audio Scanneru. Lite cita gotove parove; ne skenira i ne ucitava model. Prvih pet predloga levo i PRE/POSLE ostaju po starim pravilima. Bez potvrde nema nasumicne zamene.</p>
+    <div class="row"><button data-act="externalpick">Uvezi audio rezultate (.djmatches)</button><button data-act="externalstop">Stop uvoza</button><input id="externalFile" type="file" accept=".djmatches" hidden></div><p id="externalStatus" class="small mut">Proveravam uvezenu bazu...</p>
+    <div class="row">${Object.entries({tonal:'Tonalna fraza',rhythm:'Ritam',sample:'Audio fragment'}).map(([k,label])=>`<label>${label} <input id="external_${k}" type="number" min="0" max="100" value="${s.external_audio_thresholds?.[k]??({tonal:55,rhythm:65,sample:70}[k])}" style="width:65px"></label>`).join('')}</div><p class="small mut">Skor nije procenat sigurnosti. Prag filtrira vec proverene parove; kontrola redosleda i trajanje i dalje moraju da prodju. Uvoz proverava identitet fajlova citanjem sadrzaja, samo kada ga pokrenes.</p><button data-act="saveset">Sacuvaj izbor i pragove</button></div>
     <div class="card"><h3>Gosti</h3><div class="row"><label>Max zahteva</label><input id="glc" value="${s.guest_limit.count}" style="width:70px"><label>na minuta</label><input id="glm" value="${s.guest_limit.minutes}" style="width:70px"></div>
       <p class="mut small">PIN za tablet: <b>${esc(s.dj_pin)}</b> — otvori na tabletu http://IP:${s.port}/login?pin=PIN</p></div>
     <button class="pri" data-act="saveset">Sacuvaj sve</button>`;
   $$('input[id^=w_]').forEach(r => r.addEventListener('input', () => $('#wv_' + r.id.slice(2)).textContent = r.value));
+  api('/api/external-audio/status').then(d=>{if($('#externalStatus'))$('#externalStatus').textContent='Povezano '+d.mapped+' pesama · '+d.pairs+' parova · '+d.database+(d.last_import?' · Nepovezano '+d.last_import.unresolved:'');}).catch(()=>{});
   $('#fontScaleRange').oninput=e=>setFontScale(+e.target.value);
   $('#ctrlWheelText').onchange=e=>{ctrlWheelText=e.target.checked;localStorage.setItem('djCtrlWheelText',ctrlWheelText?'1':'0');saveFontPreferences();};
 };
@@ -442,7 +447,7 @@ async function saveSettings() {
     dupes_dir: $('#sdup').value.trim(), export_dir: $('#sexp').value.trim(), broadcast_port: +$('#sbp').value, broadcast_enabled: $('#sbe').checked,
     weights: Object.fromEntries($$('input[id^=w_]').map(r => [r.id.slice(2), +r.value])),
     guest_limit: {count: +$('#glc').value, minutes: +$('#glm').value},
-    edition: 'lite'};
+    additional_source: $('#externalSource').value, external_audio_thresholds:Object.fromEntries(['tonal','rhythm','sample'].map(k=>[k,+$('#external_'+k).value])), edition: 'lite'};
   await api('/api/settings', s); toast('Sacuvano');
 }
 
@@ -613,14 +618,14 @@ function renderLiveAudio(data) {
   element.className='live-content';
   const actions=t=>`<div class="live-actions"><button data-act="copysong" data-id="${t.id}" title="Copy Song">Copy</button><button data-act="dragsong" data-id="${t.id}">Prevuci</button><button data-act="reveal" data-id="${t.id}">Fajl</button></div>`;
   const row=(t,i,kind)=>{
-    if(!t)return `<div class="live-audio-item live-empty"><span class="live-number">${i+1}</span><span class="mut">${kind==='audio'?'Nema dodatnog predloga koji prolazi uslove':'Nema dovoljno podataka u listama'}</span></div>`;
+    if(!t)return `<div class="live-audio-item live-empty"><span class="live-number">${i+1}</span><span class="mut">${kind==='audio'?(data.additional_source==='external'?'Nema potvrđenog para u bazi':'Nema dodatnog predloga koji prolazi uslove'):'Nema dovoljno podataka u listama'}</span></div>`;
     const detail=kind==='audio'?(t.style_label||t.label||'Osnovni algoritam'):`${t.times}× u ${t.lists} lista`;
     const score=kind==='audio'?t.score.toFixed(1):t.times+'×';
     const tip=kind==='audio'?detail:(t.sources||[]).join(' · ');
     return `<div class="live-audio-item ${kind==='audio'?'audio-match':'history-match'}" data-history-side="${kind}"><span class="live-number">${i+1}</span><div class="live-item-body"><div class="live-title" title="${esc((t.artist?t.artist+' - ':'')+t.title)}">${name(t)}</div><div class="live-secondary"><span title="${esc(tip)}">${esc(detail)}</span>${actions(t)}</div></div><span class="live-score">${esc(score)}</span></div>`;
   };
   const group=(label,items,kind)=>`<section class="live-group" data-live-group="${kind}"><h4>${label}</h4><div class="live-group-rows">${Array.from({length:3},(_,i)=>row(items[i],i,kind)).join('')}</div></section>`;
-  element.innerHTML=`<div class="live-context"><span>3 predloga · 3 PRE · 3 POSLE</span><span>za trenutnu pesmu</span><p class="sr-only">${data.current?name(data.current):''}</p></div><div class="live-list live-context-list">${group('DODATNI PREDLOZI',audio,'audio')}${group('PRE',history.before||[],'before')}${group('POSLE',history.after||[],'after')}</div>`;
+  element.innerHTML=`<div class="live-context"><span>3 predloga · 3 PRE · 3 POSLE</span><span>za trenutnu pesmu</span><p class="sr-only">${data.current?name(data.current):''}</p></div><div class="live-list live-context-list">${group(data.additional_source==='external'?'AUDIO BAZA':'DODATNI PREDLOZI',audio,'audio')}${group('PRE',history.before||[],'before')}${group('POSLE',history.after||[],'after')}</div>`;
 }
 
 document.addEventListener('input', e => {
@@ -766,3 +771,16 @@ document.addEventListener('change',e=>{
  })();
 });
 
+
+actions.externalpick=()=>$('#externalFile').click();
+actions.externalstop=async()=>{await api('/api/job/stop',{kind:'external_audio_import'});toast('Zaustavljam uvoz; prethodna baza ostaje dok se novi uvoz ne zavrsi.');};
+document.addEventListener('change',event=>{
+ if(event.target.id!=='externalFile')return;
+ const file=event.target.files?.[0];event.target.value='';if(!file)return;
+ guard(async()=>{
+  if(file.size>100*1024*1024)throw Error('Najvise 100 MB.');
+  const response=await fetch('/api/external-audio/import',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});
+  const result=await response.json();if(!response.ok)throw Error(result.detail||'Uvoz nije pokrenut.');
+  toast('Povezujem audio rezultate sa tvojim fajlovima. Napredak je na vrhu. Posle uvoza izaberi Uvezena audio baza i Sacuvaj.');
+ })();
+});

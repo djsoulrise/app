@@ -1,0 +1,10 @@
+DJ Miljan Audio Scanner source is published under AGPL-3.0-or-later.
+Corresponding source and build instructions: https://github.com/djsoulrise/app/tree/audio-scanner/scanner
+Essentia.js 0.1.3 / Essentia, Music Technology Group, Universitat Pompeu Fabra, AGPL-3.0.
+Unmodified package source: https://github.com/MTG/essentia.js/tree/v0.1.3
+Distribution: https://registry.npmjs.org/essentia.js/-/essentia.js-0.1.3.tgz
+The complete AGPL license is included as LICENSE-AGPL-3.0.txt.
+Node.js: MIT and bundled third-party notices, included in scanner/runtime/NODE-LICENSE.txt in the source/build package.
+FFmpeg: distributed by imageio-ffmpeg; https://github.com/imageio/imageio-ffmpeg (BSD wrapper; FFmpeg binary licenses apply separately).
+NumPy and SciPy: BSD licenses; Mutagen: GPL-2.0-or-later; FastAPI: MIT; Uvicorn: BSD; pywebview: BSD.
+The application does not include the user's music or a newly trained neural network.

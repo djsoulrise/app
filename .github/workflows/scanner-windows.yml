@@ -1,0 +1,81 @@
+name: Standalone Audio Scanner and Lite audio database reader
+on:
+  push:
+    branches: [audio-scanner]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install scanner and build dependencies
+        run: python -m pip install -r scanner/requirements.txt -r requirements.txt pytest pyinstaller
+      - name: Install pinned Essentia WebAssembly and verified Node runtime
+        run: |
+          npm ci --prefix scanner --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scanner/build_runtime.py
+      - name: Test scanner, portability, unchanged original recommendations and lightweight reader
+        run: python -m pytest tests scanner/tests -q
+      - name: Real source scanner self-test
+        shell: python
+        run: |
+          import pathlib,subprocess,tempfile,os,json
+          with tempfile.TemporaryDirectory() as folder:
+              report=pathlib.Path(folder)/'scanner.json'
+              env=dict(os.environ,DJ_SCANNER_DATA=str(pathlib.Path(folder)/'scanner-data'),DJ_DATA_DIR=str(pathlib.Path(folder)/'assistant-data'))
+              subprocess.run(['python','scanner_desktop.py','--self-test',str(report)],env=env,check=True,timeout=180)
+              data=json.loads(report.read_text())
+              assert data['ok'] and data['parallel_node_workers'] and data['broken_file_skipped'] and data['resume'] and data['portable_export'] and data['full_import'],data
+      - name: Browser tests for scanner and unchanged compact Lite console
+        run: |
+          npm install --no-save playwright
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scanner/tests/ui-scanner.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/ui-smoke.cjs
+      - name: Package standalone scanner and Lite reader
+        run: |
+          python -m PyInstaller --noconfirm --clean scanner.spec
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m PyInstaller --noconfirm --clean "DJ asistent.spec"
+      - name: Verify both actual EXE packages
+        shell: python
+        run: |
+          import pathlib,subprocess,tempfile,os,json
+          with tempfile.TemporaryDirectory() as folder:
+              env=dict(os.environ,DJ_SCANNER_DATA=str(pathlib.Path(folder)/'scanner-data'),DJ_DATA_DIR=str(pathlib.Path(folder)/'assistant-data'))
+              for exe,command,name in [('DJ Miljan Audio Scanner.exe','--self-test','scanner.json'),('DJ Miljan Assistant Lite.exe','--build-self-test','lite.json'),('DJ Miljan Assistant Lite.exe','--window-restore-self-test','restore.json')]:
+                  report=pathlib.Path(folder)/name
+                  result=subprocess.run([str(pathlib.Path('dist',exe).resolve()),command,str(report)],env=env,timeout=180)
+                  assert result.returncode==0,report.read_text() if report.exists() else result
+                  data=json.loads(report.read_text());assert data['ok'],data
+                  if name=='scanner.json':assert data['frozen'] and data['parallel_node_workers'] and data['no_midi'] and data['broken_file_skipped'] and data['full_import'],data
+                  elif name=='lite.json':assert data['frozen'] and not data['heavy_modules_loaded'],data
+                  else:assert data['painted'] and data['state_preserved'] and data['cycles']==3,data
+          for path in pathlib.Path('dist').glob('*.exe'):print(path.name,path.stat().st_size)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DJ-Miljan-Audio-Scanner
+          path: dist/DJ Miljan Audio Scanner.exe
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DJ-Miljan-Assistant-Lite-AudioDB
+          path: dist/DJ Miljan Assistant Lite.exe
+          retention-days: 30
+      - name: UI verification images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scanner-and-Lite-layouts
+          path: |
+            ui-scanner.png
+            ui-console-*.png
+          if-no-files-found: warn

@@ -1,0 +1,7 @@
+fastapi==0.143.3
+uvicorn==0.54.0
+numpy==2.3.5
+scipy==1.17.0
+mutagen==1.48.1
+imageio-ffmpeg==0.6.0
+pywebview

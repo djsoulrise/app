@@ -34,3 +34,9 @@ assets/discogs-vinet.json
 # Local validation audio/features and private runtime data.
 data/
 checks/
+
+# Standalone scanner dependencies, runtime and private scans.
+node_modules/
+scanner/runtime/
+*.djscan
+*.djmatches

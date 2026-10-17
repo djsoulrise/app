@@ -35,6 +35,8 @@ DEFAULTS = {
     "mode": "ravno",
     "style_strictness": "normalno",
     "audio_similarity_threshold": 0.97,
+    "additional_source": "original",
+    "external_audio_thresholds": {"tonal":55.0,"rhythm":65.0,"sample":70.0},
     "guest_limit": {"count": 2, "minutes": 30},
     "tip_text": "",
     "tip_ips_payload": "",

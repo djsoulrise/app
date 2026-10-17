@@ -10,13 +10,14 @@ import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 
 import qrcode
 from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import learning_import, history_context, event_exports, shortcuts, native_files, grid_scan, config, db, duplicates, library, nowplaying, playlists, styles, suggest
+from . import external_audio, learning_import, history_context, event_exports, shortcuts, native_files, grid_scan, config, db, duplicates, library, nowplaying, playlists, styles, suggest
 from .config import DATA, SETTINGS
 from .scan_control import ScanCancelled
 from .keys import key_score
@@ -174,7 +175,7 @@ def status():
 
 SETTING_KEYS = ["music_folders", "nml_path", "history_dir", "dupes_dir", "export_dir", "main_folder_hint", "port",
                 "broadcast_enabled", "broadcast_port", "weights", "mode", "style_strictness", "guest_limit", "tip_text",
-                "tip_ips_payload", "audience"]
+                "tip_ips_payload", "audience", "additional_source", "external_audio_thresholds"]
 
 
 @app.get("/api/settings")
@@ -186,6 +187,15 @@ def get_settings(request: Request):
 
 @app.post("/api/settings")
 def set_settings(body: dict = Body(...)):
+    if 'additional_source' in body and body['additional_source'] not in ('original','external'):
+        raise HTTPException(400,'Nepoznat izvor dodatnih predloga.')
+    if 'external_audio_thresholds' in body:
+        import math
+        try:
+            values={k:float(body['external_audio_thresholds'].get(k,v)) for k,v in external_audio.THRESHOLDS.items()}
+            if not all(math.isfinite(v) and 0<=v<=100 for v in values.values()):raise ValueError()
+            body['external_audio_thresholds']=values
+        except (ValueError,TypeError,AttributeError):raise HTTPException(400,'Audio pragovi moraju biti od 0 do 100.')
     for k in SETTING_KEYS:
         if k in body:
             SETTINGS[k] = body[k]
@@ -406,6 +416,9 @@ def style_list():
 @app.get("/api/suggest")
 def get_suggest(track_id: int, mode: str | None = None, strict: str | None = None):
     result=suggest.suggest(track_id, mode, strict=strict)
+    if SETTINGS.get('additional_source')=='external':
+        result['additional']=external_audio.recommend(track_id,{t['id'] for t in result.get('items',[])})
+        result['additional_source']='external'
     result['history_context']=history_context.neighbors(track_id,{t['id'] for t in result.get('additional',[])})
     return result
 
@@ -973,3 +986,30 @@ def save_ui_preferences(request: Request, body: dict = Body(...)):
 
 
 
+
+
+@app.get('/api/external-audio/status')
+def external_audio_status(request: Request):
+    _shortcut_local(request)
+    return external_audio.status()
+
+
+@app.post('/api/external-audio/import')
+async def external_audio_import(request: Request):
+    _shortcut_local(request)
+    import tempfile
+    path=None
+    try:
+        with tempfile.NamedTemporaryFile(dir=DATA,suffix='.djmatches',delete=False) as file:
+            path=Path(file.name);total=0
+            async for chunk in request.stream():
+                total+=len(chunk)
+                if total>100*1024*1024:raise HTTPException(413,'Najvise 100 MB.')
+                file.write(chunk)
+        def run():
+            try:return external_audio.import_file(path,_progress,JOB_STOP)
+            finally:path.unlink(missing_ok=True)
+        return start_job('Uvoz gotovih audio rezultata',run,kind='external_audio_import',cancellable=True)
+    except BaseException:
+        if path:path.unlink(missing_ok=True)
+        raise

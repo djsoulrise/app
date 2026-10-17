@@ -1,0 +1,5 @@
+from PyInstaller.utils.hooks import collect_all,collect_submodules
+ffdata,ffbins,ffimports=collect_all('imageio_ffmpeg')
+a=Analysis(['scanner_desktop.py'],pathex=[],binaries=ffbins,datas=[('scanner/static','scanner/static'),('scanner/engine.cjs','scanner'),('scanner/node_modules/essentia.js/dist/essentia-wasm.umd.js','scanner/node_modules/essentia.js/dist'),('scanner/node_modules/essentia.js/dist/essentia.js-core.umd.js','scanner/node_modules/essentia.js/dist'),('scanner/runtime/node.exe','scanner/runtime'),('scanner/runtime/NODE-LICENSE.txt','scanner/runtime'),('scanner/runtime/FFMPEG-LICENSE.txt','scanner/runtime'),('scanner/LICENSE-GPL-3.0.txt','scanner'),('scanner/LICENSE-AGPL-3.0.txt','scanner'),('scanner/THIRD-PARTY-NOTICES.txt','scanner')]+ffdata,hiddenimports=ffimports+collect_submodules('uvicorn'),excludes=['torch','onnxruntime','librosa','mido','rtmidi','numba'],noarchive=False)
+pyz=PYZ(a.pure)
+exe=EXE(pyz,a.scripts,a.binaries,a.datas,[],name='DJ Miljan Audio Scanner',console=False,upx=False)
