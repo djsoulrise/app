@@ -20,13 +20,13 @@ CURRENT = None
 THREAD = None
 RESULT = None
 STATE = {'phase':'Miruje', 'track_id':None, 'error':None}
-DEFAULTS = dict(rhythm=True, tonal=True, rhythm_cutoff=90, tonal_cutoff=85, auto_scan=True)
+DEFAULTS = dict(rhythm=True, tonal=True, rhythm_cutoff=80, tonal_cutoff=80, auto_scan=True, whole_library=True)
 
 
 def settings(body=None):
     result = {**DEFAULTS, **config.SETTINGS.get('chorus_audio', {})}
     if body is not None:
-        for key in ('rhythm','tonal','auto_scan'):
+        for key in ('rhythm','tonal','auto_scan','whole_library'):
             if key in body:
                 if not isinstance(body[key], bool): raise ValueError('Opcija mora biti ukljucena ili iskljucena.')
                 result[key] = body[key]
@@ -164,6 +164,8 @@ def refresh_cues():
 
 
 def scan(progress=None, stop_event=None):
+    global REVISION
+    REVISION+=1
     init();refresh_cues();tracks=db.rows('SELECT * FROM tracks WHERE on_disk=1 ORDER BY id');done=errors=0
     for i,track in enumerate(tracks):
         check_stop(stop_event)
@@ -188,7 +190,7 @@ def rhythm(a,b):
     pa,pb=np.array(a['profile']),np.array(b['profile'])
     score=float(np.clip(np.fft.irfft((np.conj(np.fft.rfft(pa,axis=1))*np.fft.rfft(pb,axis=1)).sum(axis=0),n=64).max(),0,1))*100
     delta=min(abs(a['bpm']-b['bpm']*factor)/a['bpm'] for factor in (.5,1,2))
-    reliable=min(a['periodicity'],b['periodicity'])>=.18 and min(a['active_bands'],b['active_bands'])>=2 and delta<=.04
+    reliable=min(a['periodicity'],b['periodicity'])>=.18 and min(a['active_bands'],b['active_bands'])>=2
     return score,reliable,delta
 
 
@@ -217,10 +219,11 @@ def rank(track, source, stop_event):
         target=db.one('SELECT * FROM tracks WHERE id=?',(row['track_id'],))
         if not target or not valid(row,target): continue
         best=None;tonal_pairs=[]
+        targets=json.loads(row['data'])
         for a in sections:
-            for b in json.loads(row['data']):
+            for b in targets:
                 score,reliable,delta=rhythm(a['features'],b['features'])
-                entry=dict(id=target['id'],artist=target['artist'],title=target['title'],score=score,groove=score,rhythm_score=score,rhythm_reliable=reliable,tempo_delta=delta*100,audio={'bpm':b['features']['bpm']},tonal_score=0.,tonal_reliable=False,source_section={k:v for k,v in a.items() if k!='features'},target_section={k:v for k,v in b.items() if k!='features'},reasons=[],track=target)
+                entry=dict(id=target['id'],artist=target['artist'],title=target['title'],score=score,groove=score,rhythm_score=score,rhythm_reliable=reliable,tempo_delta=delta*100,audio={'bpm':b['features']['bpm']},tonal_score=0.,tonal_reliable=False,tonal_checked=False,source_section={k:v for k,v in a.items() if k!='features'},target_section={k:v for k,v in b.items() if k!='features'},reasons=[],track=target)
                 if best is None or score>best['rhythm_score']: best=entry
                 tonal_pairs.append((tonal_hint(a['features'],b['features']),a,b))
         hint,a,b=max(tonal_pairs,key=lambda p:p[0]);best['_tonal_pair']=(a,b);best['_hint']=hint
@@ -233,7 +236,7 @@ def rank(track, source, stop_event):
         STATE['phase']=f'Proveravam tonalne delove {i+1}/{len(shortlist)}'
         a,b=hit['_tonal_pair'];aa,bb=a['features'],b['features'];aligned=chorus.align(aa,bb,stop_event)
         seconds=min(aligned['a_to']-aligned['a_from'],aligned['b_to']-aligned['b_from'])
-        hit['tonal_score']=aligned['tonal_score'];hit['tonal_reliable']=aligned['coverage']>=60 and seconds>=8 and min(aa['tonal_variation'],bb['tonal_variation'])>=.04
+        hit['tonal_checked']=True;hit['tonal_score']=aligned['tonal_score'];hit['tonal_reliable']=aligned['coverage']>=60 and seconds>=8 and min(aa['tonal_variation'],bb['tonal_variation'])>=.04
         hit['tonal_alignment']=aligned;hit['tonal_source_section']={k:v for k,v in a.items() if k!='features'};hit['tonal_target_section']={k:v for k,v in b.items() if k!='features'}
     for hit in all_hits: hit.pop('_tonal_pair',None);hit.pop('_hint',None)
     return all_hits
@@ -299,7 +302,7 @@ def fifth(current, pool, excluded_ids, diagnostics):
     for original in result['hits']:
         if original['id'] not in ids: continue
         hit={k:v for k,v in original.items() if k!='track'};rp,tp=passing(hit,options)
-        hit.update(rhythm_pass=rp,tonal_pass=tp,accepted=rp or tp,score=max(hit['rhythm_score'] if rp else 0,hit['tonal_score'] if tp else 0),match_kind='R + T' if rp and tp else 'Ritam' if rp else 'Tonalno' if tp else 'Ne prolazi')
+        hit.update(rhythm_pass=rp,tonal_pass=tp,accepted=rp or tp,score=max(hit['rhythm_score'] if rp else 0,hit['tonal_score'] if tp else 0) if rp or tp else max(hit['rhythm_score'] if options['rhythm'] else 0,hit['tonal_score'] if options['tonal'] else 0),match_kind='R + T' if rp and tp else 'Ritam' if rp else 'Motiv' if tp else 'Ne prolazi')
         if not hit['accepted']: hit['reasons']=['Ne prolazi aktivne audio uslove (tonalno se detaljno proverava do 120 najblizih).']
         hits.append(hit)
     hits.sort(key=lambda h:(h['accepted'],h['rhythm_pass'] and h['tonal_pass'],h['score'],h['rhythm_score']),reverse=True)

@@ -48,6 +48,16 @@ class AutoChorusTests(unittest.TestCase):
   item.update(rhythm_reliable=False,tonal_reliable=True)
   self.assertEqual(auto.passing(item,auto.DEFAULTS),(False,True))
   self.assertEqual(auto.passing(item,{**auto.DEFAULTS,'tonal':False}),(False,False))
+ def test_rhythm_uses_pattern_not_metadata_tempo(self):
+  profile=np.random.default_rng(3).normal(size=(3,64));profile-=profile.mean(axis=1,keepdims=True);profile/=np.linalg.norm(profile)
+  a={'profile':profile.tolist(),'bpm':100.,'periodicity':.6,'active_bands':3}
+  b={**a,'bpm':125.}
+  score,reliable,delta=auto.rhythm(a,b)
+  self.assertGreater(score,99);self.assertTrue(reliable);self.assertGreater(delta,.2)
+  b['profile']=np.random.default_rng(4).normal(size=(3,64)).tolist()
+  # Normalize the deliberately unrelated signature as the extractor does.
+  p=np.array(b['profile']);p-=p.mean(axis=1,keepdims=True);p/=np.linalg.norm(p);b['profile']=p.tolist()
+  self.assertLess(auto.rhythm(a,b)[0],80)
  def test_threshold_validation_and_saved_settings(self):
   self.assertEqual(auto.settings({'rhythm_cutoff':93,'tonal':False})['rhythm_cutoff'],93)
   self.assertFalse(json.loads(config.SETTINGS_FILE.read_text())['chorus_audio']['tonal'])
@@ -78,6 +88,18 @@ class AutoChorusTests(unittest.TestCase):
   auto.settings({'rhythm_cutoff':99})
   with patch.object(auto,'ensure'):selected,_=auto.fifth(current,pool,set(),{})
   self.assertIsNone(selected)
+ def test_discovery_bypasses_key_tempo_gates_without_changing_first_four(self):
+  from app import suggest
+  for tid in range(1,11):
+   db.conn().execute('INSERT INTO tracks(id,pkey,path,artist,title,on_disk,bpm,camelot,energy) VALUES(?,?,?,?,?,1,?,?,5)',(tid,str(tid),'unused','Artist '+str(tid),'Song '+str(tid),200 if tid==10 else 120,'1A' if tid==10 else '8A'))
+  db.conn().commit()
+  with patch.object(auto,'fifth',return_value=(None,None)): baseline=suggest.suggest(1)['items']
+  auto.RESULT={'track_id':1,'sections':[],'hits':[{'id':10,'artist':'Artist 10','title':'Song 10','rhythm_reliable':True,'rhythm_score':95.,'tonal_reliable':False,'tonal_score':0.,'score':95.,'reasons':[]}]}
+  with patch.object(auto,'ensure'): result=suggest.suggest(1)
+  self.assertEqual([t['id'] for t in result['items'][:4]],[t['id'] for t in baseline[:4]])
+  self.assertEqual(result['items'][4]['id'],10)
+  self.assertEqual(result['audio_diagnostics']['accepted_top'][0]['id'],10)
+  self.assertEqual(len({t['id'] for t in result['items']}),5)
  def test_stop_before_decode(self):
   self.track(1);stop=threading.Event();stop.set()
   with self.assertRaises(ScanCancelled):auto.scan(stop_event=stop)

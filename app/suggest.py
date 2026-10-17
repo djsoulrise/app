@@ -226,17 +226,18 @@ def suggest(current_id: int, mode: str | None = None, n: int = 5, surprise: bool
     # Unavailable/weak audio evidence leaves the deterministic original fifth.
     audio_status = None
     audio_diagnostics = {}
-    if n == 5 and len(items) >= 4:
+    if n == 5:
         from . import auto_audio
         first_four = items[:4]
         excluded_names = identities | {core_title(t["artist"] or "", t["title"] or "") for t in first_four + [cur]}
         # Allow replacing the original fifth itself; only the first four stay reserved.
         if len(items) == 5:
             excluded_names.discard(core_title(items[4]["artist"] or "", items[4]["title"] or ""))
-        pool = [c["t"] for c in ok
+        audio_pool = cands if auto_audio.settings()["whole_library"] else ok
+        pool = [c["t"] for c in audio_pool
                 if core_title(c["t"]["artist"] or "", c["t"]["title"] or "") not in excluded_names]
         audio, audio_status = auto_audio.fifth(cur, pool, {t["id"] for t in first_four}, audio_diagnostics)
-        if audio:
+        if audio and len(first_four) == 4:
             audio.update(style_label=styles.describe(_vec(audio)), note=notes.get(audio["id"]), parts={"audio_rhythm": audio["score"]/100})
             items = first_four + [audio]
     library.attach_tags(items)

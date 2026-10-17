@@ -73,7 +73,7 @@ const {chromium}=require('playwright');
  await page.locator('#chorusTonal').uncheck();
  await page.locator('[data-act="chorussave"]').click();
  await page.waitForTimeout(100);
- if(chorusOptions.rhythm_cutoff!==93||chorusOptions.tonal!==false||!chorusOptions.auto_scan)throw Error('Automatic audio settings');
+ if(chorusOptions.rhythm_cutoff!==93||chorusOptions.tonal!==false||!chorusOptions.auto_scan||!chorusOptions.whole_library)throw Error('Automatic audio settings');
  if(await page.locator('#nav [data-p="chorus"]').count())throw Error('Unwanted separate manual comparison');
  await page.locator('[data-scan-start="chorus_library"]').click();
  await page.locator('[data-scan-stop="chorus_library"]:not([disabled])').waitFor();

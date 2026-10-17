@@ -1,4 +1,4 @@
-"""On-demand comparison of two selected excerpts. Independent of recommendations."""
+"""Excerpt features and phrase alignment, used by automatic Audio ritam indexing."""
 import json
 import math
 import os
@@ -9,6 +9,8 @@ from pathlib import Path
 from . import audio_rhythm, db
 from .scan_control import check_stop
 
+CENTER = .5
+FLOOR = .5
 VERSION = 1
 LAST = None
 
@@ -104,6 +106,9 @@ def align(a,b,stop_event=None):
     import numpy as np
     check_stop(stop_event)
     aa,bb=np.array(a['chroma']),np.array(b['chroma'])
+    # Suppress a constant spectral/chord background; retain changes in the phrase.
+    aa=aa-CENTER*aa.mean(axis=0,keepdims=True);bb=bb-CENTER*bb.mean(axis=0,keepdims=True)
+    aa/=np.maximum(np.linalg.norm(aa,axis=1,keepdims=True),1e-8);bb/=np.maximum(np.linalg.norm(bb,axis=1,keepdims=True),1e-8)
     similarity=np.stack([aa@np.roll(bb,shift,axis=1).T for shift in range(12)])
     scores=np.zeros((12,len(aa)+1,len(bb)+1),dtype='float32')
     trace=np.zeros_like(scores,dtype='uint8')
@@ -111,7 +116,7 @@ def align(a,b,stop_event=None):
     for diagonal in range(2,len(aa)+len(bb)+1):
         if diagonal % 32 == 0: check_stop(stop_event)
         ii=np.arange(max(1,diagonal-len(bb)),min(len(aa),diagonal-1)+1);jj=diagonal-ii
-        choices=np.stack([np.zeros((12,len(ii))),scores[:,ii-1,jj-1]+(similarity[:,ii-1,jj-1]-.68)*3,
+        choices=np.stack([np.zeros((12,len(ii))),scores[:,ii-1,jj-1]+(similarity[:,ii-1,jj-1]-FLOOR)*3,
                           scores[:,ii-1,jj]-.35,scores[:,ii,jj-1]-.35])
         ways=choices.argmax(axis=0)
         scores[:,ii,jj]=np.take_along_axis(choices,ways[None,:,:],axis=0)[0]
@@ -125,9 +130,9 @@ def align(a,b,stop_event=None):
         else: j-=1
     coverage=min((end_i-i)/max(1,len(aa)),(end_j-j)/max(1,len(bb)))
     return {'alignment_strength':peak,'tonal_score':round((sum(matches)/max(1,len(matches)))*100,1),
-            'coverage':round(coverage*100,1),'pitch_shift':int(shift if shift<=6 else shift-12),
-            'a_from':round(i/a['chroma_hz'],1),'a_to':round(end_i/a['chroma_hz'],1),
-            'b_from':round(j/b['chroma_hz'],1),'b_to':round(end_j/b['chroma_hz'],1)}
+            'coverage':float(round(coverage*100,1)),'pitch_shift':int(shift if shift<=6 else shift-12),
+            'a_from':float(round(i/a['chroma_hz'],1)),'a_to':float(round(end_i/a['chroma_hz'],1)),
+            'b_from':float(round(j/b['chroma_hz'],1)),'b_to':float(round(end_j/b['chroma_hz'],1))}
 
 
 def compare(a,b,stop_event=None,rhythm_cutoff=90,tonal_cutoff=85):
