@@ -15,7 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import chorus, shortcuts, native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
+from . import auto_audio, chorus, shortcuts, native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
 from .config import DATA, SETTINGS
 from .scan_control import ScanCancelled
 from .keys import key_score
@@ -55,6 +55,8 @@ async def lifespan(app: FastAPI):
     print(f"\n  DJ asistent: http://127.0.0.1:{SETTINGS['port']}   |  tablet PIN: {SETTINGS['dj_pin']}"
           f"  (http://{lan_ip()}:{SETTINGS['port']}/login?pin=...)\n  Gosti: {guest_url()}\n")
     yield
+    auto_audio.STOP.set()
+    JOB_STOP.set()
 
 
 app = FastAPI(title="DJ Miljan Assistant", lifespan=lifespan)
@@ -157,10 +159,11 @@ def refresh():
 def status():
     c = db.one("SELECT COUNT(*) n, SUM(on_disk) disk, SUM(in_traktor) trk, SUM(flex_grid) flex FROM tracks")
     cur = nowplaying.STATE
+    auto_audio.ensure(cur.get("track_id"))
     return {"job": JOB, "counts": c, "now": cur, "broadcast": nowplaying.BROADCAST, "history": nowplaying.HISTORY,
             "ai": ai.available(), "fpcalc": duplicates._fpcalc() is not None, "guest_url": guest_url(),
             "event": db.one("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1"),
-            "audio_revision": audio_rhythm.SCAN_REVISION, "audio_threshold": audio_rhythm.threshold()}
+            "audio_revision": f"{audio_rhythm.SCAN_REVISION}:{auto_audio.REVISION}:{auto_audio.STATE.get('phase')}:{auto_audio.STATE.get('error')}", "audio_threshold": json.dumps(auto_audio.settings(),sort_keys=True)}
 
 
 # ---------- settings ----------
@@ -396,6 +399,7 @@ def dupes_move(body: dict = Body(...)):
 @app.get("/api/now")
 def now():
     cur = nowplaying.STATE
+    auto_audio.ensure(cur.get("track_id"))
     return {**cur, "track": library.get_track(cur["track_id"]) if cur["track_id"] else None}
 
 
@@ -990,21 +994,26 @@ def save_ui_preferences(request: Request, body: dict = Body(...)):
     return SETTINGS['ui_preferences']
 
 
-@app.get('/api/chorus/status')
-def chorus_status(request: Request):
-    _shortcut_local(request)
-    return {'result': chorus.LAST}
+@app.get('/api/audio/chorus/status')
+def auto_audio_status():
+    return auto_audio.status()
 
 
-@app.post('/api/chorus/compare')
-def chorus_compare(request: Request, body: dict = Body(...)):
+@app.post('/api/audio/chorus/settings')
+def auto_audio_settings(request: Request, body: dict = Body(...)):
     _shortcut_local(request)
-    try:
-        for side in ('a','b'):
-            int(body[side])
-            chorus.bounds(body[side+'_start'],body[side+'_end'])
-        for key,default in (('rhythm_cutoff',90),('tonal_cutoff',85)):
-            if not 50 <= float(body.get(key,default)) <= 100: raise ValueError('Prag mora biti od 50 do 100%.')
-    except (ValueError,TypeError,KeyError) as exc:
-        raise HTTPException(400,str(exc))
-    return start_job('Poredjenje odabranih refrena',lambda:chorus.compare_pair(body,_progress,JOB_STOP),kind='chorus',cancellable=True)
+    try: return auto_audio.settings(body)
+    except (ValueError,TypeError) as exc: raise HTTPException(400,str(exc))
+
+
+@app.post('/api/audio/chorus/scan')
+def auto_audio_scan(request: Request):
+    _shortcut_local(request)
+    return start_job('Audio ritam / refren biblioteke',lambda:auto_audio.scan(_progress,JOB_STOP),kind='chorus_library',cancellable=True)
+
+
+@app.get('/api/audio/chorus/results')
+def auto_audio_results():
+    tid=nowplaying.STATE.get('track_id')
+    if not tid: return {'items':[], 'audio_diagnostics':{}, 'audio_status':'Nema trenutne pesme u Traktoru.'}
+    return suggest.suggest(tid)

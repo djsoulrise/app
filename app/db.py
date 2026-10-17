@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS tracks(
  user_cues INTEGER DEFAULT 0, loops INTEGER DEFAULT 0, grid_markers INTEGER DEFAULT 0, flex_grid INTEGER DEFAULT 0,
  loud_peak REAL, loud_perc REAL, folder TEXT, unsorted INTEGER DEFAULT 0, tags_imported INTEGER DEFAULT 0,
  avg_pos REAL, fp TEXT, search TEXT, title_n TEXT, no_artist INTEGER DEFAULT 0, energy_cue INTEGER);
+CREATE TABLE IF NOT EXISTS track_cues(track_id INTEGER, start REAL, name TEXT, type TEXT);
 CREATE INDEX IF NOT EXISTS ix_tracks_bpm ON tracks(bpm);
 CREATE TABLE IF NOT EXISTS tag_defs(name TEXT PRIMARY KEY, display TEXT, junk INTEGER DEFAULT 0, ignored INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS track_tags(track_id INTEGER, tag TEXT, PRIMARY KEY(track_id, tag));

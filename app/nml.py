@@ -105,6 +105,7 @@ def parse_entry(e: ET.Element) -> dict | None:
         "grid_markers": len(grid_cues), "flex_grid": 1 if len(grid_cues) > 1 else 0,
         "loud_peak": _float_signed(loud, "PEAK_DB"), "loud_perc": _float_signed(loud, "PERCEIVED_DB"),
         "energy_cue": energy, "grid_bpms": len(grid_bpms),
+        "cue_positions": [{"name": c.get("NAME") or "", "start": max(0, _int(c.get("START")) / 1000), "type": c.get("TYPE") or "0"} for c in cues if c.get("START") is not None],
     }
 
 

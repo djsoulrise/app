@@ -6,20 +6,21 @@ const {chromium}=require('playwright');
  const page=await browser.newPage({viewport:{width:1100,height:680}});
  let current=1,saved=.97,job={running:false},starts=[],stops=[];
  let shortcuts={actions:{toggle_window:'Prikazi / minimizuj Assistant',focus_search:'Fokus na pretragu',next_suggestion:'Sledeci predlog',copy_song:'Copy Song'},settings:{keyboard_enabled:true,keyboard:{toggle_window:{vk:88,modifiers:2,label:'Ctrl+X'}},midi:{}},sequence:0,connected:false};
- let midiLearns=[],events=[],fileCopies=[],settingsWrites=[],chorusBody=null,chorusResult=null,uiPrefs={font_scale:115,ctrl_wheel_text:true};
+ let midiLearns=[],events=[],fileCopies=[],settingsWrites=[],chorusBody=null,chorusResult=null,chorusOptions={auto_scan:true,rhythm:true,tonal:true,rhythm_cutoff:90,tonal_cutoff:85},uiPrefs={font_scale:115,ctrl_wheel_text:true};
  const settings={style_strictness:'normalno',music_folders:[],weights:{hist:3,key:1,bpm:1,vibe:1,energy:1,year:1,genre:1,feedback:1},audience:{},guest_limit:{count:2,minutes:30},broadcast_port:8000};
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const navigate=async p=>{const item=page.locator('#nav [data-p="'+p+'"]');if(!await item.isVisible())await page.locator('#settingsbtn').click();await item.click();};
  const track=id=>({id,artist:'Test Artist',title:'Track '+id,bpm:124,camelot:'10A',energy:6,fmt:'flac',tags:[],score:98,label:'AUDIO RITAM',why:['Test audio'],style:'{}'});
- const match=id=>({id,artist:'Test Artist',title:'Track '+id,score:98,groove:99,tempo_delta:1,audio:{bpm:124},accepted:true,reasons:[]});
- const diagnostic=id=>({current_id:id,current:track(id),threshold:saved,current_audio:{bpm:124,periodicity:.8,consistency:.9,variable_tempo_suspected:false},pool:50,compared:45,counts:{},top:[],accepted_top:Array.from({length:10},(_,i)=>match(i+20))});
+ const match=id=>({match_kind:'Ritam',rhythm_score:98,tonal_score:70,id,artist:'Test Artist',title:'Track '+id,score:98,groove:99,tempo_delta:1,audio:{bpm:124},accepted:true,reasons:[]});
+ const diagnostic=id=>({engine:'chorus',options:{rhythm:true,tonal:true,rhythm_cutoff:90,tonal_cutoff:85},shortlist_limit:120,sections:[],current_id:id,current:track(id),threshold:saved,current_audio:{bpm:124,periodicity:.8,consistency:.9,variable_tempo_suspected:false},pool:50,compared:45,counts:{},top:[],accepted_top:Array.from({length:10},(_,i)=>match(i+20))});
  await page.route('http://127.0.0.1:8765/**',async route=>{
   const u=new URL(route.request().url());let body;
   if(u.pathname==='/')return route.fulfill({contentType:'text/html',body:fs.readFileSync('app/static/index.html','utf8')});
   if(u.pathname.startsWith('/static/'))return route.fulfill({contentType:u.pathname.endsWith('.css')?'text/css':'application/javascript',body:fs.readFileSync('app'+u.pathname,'utf8')});
-  if(u.pathname==='/api/chorus/status')body={result:chorusResult};
+  if(u.pathname==='/api/audio/chorus/status')body={settings:chorusOptions,counts:{ok:3066},live:{phase:'Spremno'},note:'Tonalni shortlist 120'};
+  else if(u.pathname==='/api/audio/chorus/settings'){chorusOptions=JSON.parse(route.request().postData());body=chorusOptions;}
+  else if(u.pathname==='/api/audio/chorus/results')body={current:track(current),audio_diagnostics:diagnostic(current)};
   else if(u.pathname==='/api/search')body=[track(1),track(2)];
-  else if(u.pathname==='/api/chorus/compare'){chorusBody=JSON.parse(route.request().postData());chorusResult={a:{...track(1),start:30,end:60},b:{...track(2),start:45,end:75},rhythm_score:94,bpm_a:120,bpm_b:124,rhythm_pass:true,tonal_pass:false,tonal:{tonal_score:70,coverage:50,pitch_shift:0,a_from:30,a_to:45,b_from:45,b_to:60},notes:[],disclaimer:'Test'};body={started:true};}
   else if(u.pathname==='/api/ui-preferences'){if(route.request().method()==='POST')uiPrefs=JSON.parse(route.request().postData());body=uiPrefs;}
   else if(u.pathname==='/api/shortcuts')body={...shortcuts,sequence:events.at(-1)?.sequence || 0};
   else if(u.pathname==='/api/shortcuts/ports')body={ports:['DJ Assistant']};
@@ -37,8 +38,8 @@ const {chromium}=require('playwright');
   else if(u.pathname==='/api/audio/tracks')body=[track(1),track(2)];
   else if(u.pathname.startsWith('/api/track/'))body=track(+u.pathname.split('/').pop());
   else if(u.pathname==='/api/audio/threshold'){saved=JSON.parse(route.request().postData()).threshold;body={ok:true,threshold:saved};}
-  else if(u.pathname==='/api/audio/scan'||u.pathname==='/api/grids/audio-search'){
-   const kind=u.pathname==='/api/audio/scan'?'audio':'grid_audio';starts.push(kind);job={running:true,kind,cancellable:true,done:1,total:10,phase:'Test scan'};body={started:true};
+  else if(u.pathname==='/api/audio/scan'||u.pathname==='/api/audio/chorus/scan'||u.pathname==='/api/grids/audio-search'){
+   const kind=u.pathname==='/api/audio/scan'?'audio':u.pathname==='/api/audio/chorus/scan'?'chorus_library':'grid_audio';starts.push(kind);job={running:true,kind,cancellable:true,done:1,total:10,phase:'Test scan'};body={started:true};
   }
   else if(u.pathname==='/api/job/stop'){stops.push(JSON.parse(route.request().postData()).kind);job={...job,running:false,cancelled:true};body={stopping:true};}
   else if(u.pathname==='/api/grids')body={items:[],nml_checked:true};
@@ -68,18 +69,20 @@ const {chromium}=require('playwright');
  current=2;
  await page.waitForFunction(()=>document.querySelector('#liveaudio .sr-only').textContent.includes('Track 2'),{},{timeout:10000});
  await navigate('audio');
- await page.locator('#audioThresholdNumber').fill('90');
- if(await page.locator('#audioThresholdRange').inputValue()!=='90')throw Error('Slider sync');
- await page.locator('[data-act="audiothreshold"]').click();
- await page.waitForFunction(()=>document.querySelector('#audioResults').textContent.includes('sacuvani prag preporuka: 90%'));
- await page.locator('[data-scan-start="audio"]').click();
- await page.locator('[data-scan-stop="audio"]:not([disabled])').waitFor();
- await page.locator('[data-scan-stop="audio"]').click();
+ await page.locator('#chorusR').fill('93');
+ await page.locator('#chorusTonal').uncheck();
+ await page.locator('[data-act="chorussave"]').click();
+ await page.waitForTimeout(100);
+ if(chorusOptions.rhythm_cutoff!==93||chorusOptions.tonal!==false||!chorusOptions.auto_scan)throw Error('Automatic audio settings');
+ if(await page.locator('#nav [data-p="chorus"]').count())throw Error('Unwanted separate manual comparison');
+ await page.locator('[data-scan-start="chorus_library"]').click();
+ await page.locator('[data-scan-stop="chorus_library"]:not([disabled])').waitFor();
+ await page.locator('[data-scan-stop="chorus_library"]').click();
  await navigate('grids');
  await page.locator('[data-scan-start="grid_audio"]').click();
  await page.locator('[data-scan-stop="grid_audio"]:not([disabled])').waitFor();
  await page.locator('[data-scan-stop="grid_audio"]').click();
- if(starts.join(',')!=='audio,grid_audio'||stops.join(',')!=='audio,grid_audio')throw Error('Wrong scan control target');
+ if(starts.join(',')!=='chorus_library,grid_audio'||stops.join(',')!=='chorus_library,grid_audio')throw Error('Wrong scan control target');
  await navigate('shortcuts');
  await page.locator('[data-act="shortcutkey"][data-action="focus_search"]').click();
  await page.waitForFunction(()=>state.keyLearn==='focus_search');
@@ -122,17 +125,6 @@ const {chromium}=require('playwright');
  const savedWeights=settingsWrites.findLast(s=>s.weights);
  if(!savedWeights||Object.keys(savedWeights.weights).some(k=>k==='ntScaleRange'))throw Error('Text slider contaminated ranking weights');
  if(await page.title()!=='DJ Miljan Assistant')throw Error('App name');
- await navigate('chorus');
- for(const side of ['a','b']){
-  await page.locator('#chorusQuery_'+side).fill('Test');
-  await page.locator('[data-act="chorussearch"][data-side="'+side+'"]').click();
-  await page.locator('[data-act="choruspick"][data-side="'+side+'"][data-id="'+(side==='a'?1:2)+'"]').click();
- }
- await page.locator('#chorusStart_b').fill('0:45');await page.locator('#chorusEnd_b').fill('1:15');
- await page.locator('[data-act="choruscompare"]').click();
- await page.waitForFunction(()=>document.querySelector('#chorusResult').textContent.includes('PROLAZI RITAM'));
- if(chorusBody.a_start!==30||chorusBody.b_start!==45||chorusBody.b_end!==75)throw Error('Wrong excerpt bounds');
- if(chorusResult.tonal_pass!==false)throw Error('Rhythm and tonal conditions must be independent');
  if(errors.length)throw Error(errors.join('\n'));
  console.log('UI PASS: compact console 5+10 without scroll at 1100x680 and 940x610, menu, Start/Stop, keyboard+MIDI learn, selected file shortcuts');
  await browser.close();

@@ -25,6 +25,8 @@ jobs:
           python -m unittest discover -s tests -p "test_shortcuts.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_chorus.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_auto_chorus.py" -v
       - name: Test live UI and Start Stop controls
         run: |
           npm install --no-save playwright

@@ -57,6 +57,9 @@ def import_nml(progress=None) -> dict:
         row = [d["pkey"], d["path"], _fmt(d["path"]), os.path.dirname(d["path"]), _is_unsorted(d["path"]),
                s, t, 1, 1 if os.path.exists(d["path"]) else 0] + [d.get(k) for k in NML_COLS]
         c.execute(sql, row)
+        tid = c.execute("SELECT id FROM tracks WHERE pkey=?", (d["pkey"],)).fetchone()[0]
+        c.execute("DELETE FROM track_cues WHERE track_id=?", (tid,))
+        c.executemany("INSERT INTO track_cues VALUES(?,?,?,?)", [(tid, q["start"], q["name"], q["type"]) for q in d.get("cue_positions", [])])
         if progress and i % 200 == 0:
             progress(i, len(tracks), "Citam Traktor kolekciju")
     c.commit()

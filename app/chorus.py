@@ -27,7 +27,7 @@ def init():
     db.conn().commit()
 
 
-def extract(samples, sr=11025, stop_event=None):
+def extract(samples, sr=11025, stop_event=None, require_rhythm=True):
     import numpy as np
     from scipy.signal import correlate,find_peaks
     check_stop(stop_event)
@@ -44,8 +44,9 @@ def extract(samples, sr=11025, stop_event=None):
     ac=correlate(centered,centered,mode='full',method='fft')[len(energy)-1:]
     hz=sr/hop;lo,hi=int(hz*60/180),int(hz*60/70)
     peaks,_=find_peaks(ac[lo:hi+1])
-    if float(ac[0])<1e-6 or not len(peaks): raise ValueError('U izabranom delu nema dovoljno jasnog ritma.')
-    lag=int(max(peaks+lo,key=lambda p:ac[p]));period=float(lag)
+    weak = float(ac[0])<1e-6 or not len(peaks)
+    if weak and require_rhythm: raise ValueError('U izabranom delu nema dovoljno jasnog ritma.')
+    lag=round(hz*.5) if weak else int(max(peaks+lo,key=lambda p:ac[p]));period=float(lag)
     denom=ac[lag-1]-2*ac[lag]+ac[lag+1]
     if abs(denom)>1e-8: period+=float(.5*(ac[lag-1]-ac[lag+1])/denom)
     phase=((np.arange(len(bands))/period)%4*16).astype(int)%64
@@ -64,7 +65,7 @@ def extract(samples, sr=11025, stop_event=None):
     step=max(1,round(hz/5));chroma=np.array([chroma[i:i+step].mean(axis=0) for i in range(0,len(chroma),step)])
     chroma/=np.maximum(np.linalg.norm(chroma,axis=1,keepdims=True),1e-8)
     check_stop(stop_event)
-    return {'bpm':round(60*hz/period,2),'periodicity':round(float(ac[lag]/ac[0]),3),
+    return {'bpm':round(60*hz/period,2),'periodicity':round(float(ac[lag]/max(1e-8,ac[0])),3) if not weak else 0.,
             'active_bands':active,'profile':profile.round(5).tolist(),'chroma':chroma.round(4).tolist(),
             'chroma_hz':hz/step,'tonal_variation':float(chroma.std(axis=0).mean()),'seconds':len(samples)/sr}
 
@@ -99,32 +100,34 @@ def features(track,start,end,stop_event=None):
 
 
 def align(a,b,stop_event=None):
-    """Smith-Waterman local alignment over chroma; scores are heuristic, not probability."""
+    """Local ordered-chroma alignment, all key transpositions in one DP batch."""
     import numpy as np
-    aa,bb=np.array(a['chroma']),np.array(b['chroma']);best=None
-    for shift in range(12):
-        check_stop(stop_event)
-        similarity=aa@np.roll(bb,shift,axis=1).T
-        scores=np.zeros((len(aa)+1,len(bb)+1),dtype='float32');trace=np.zeros_like(scores,dtype='uint8')
-        for i in range(1,len(aa)+1):
-            if i % 16 == 0: check_stop(stop_event)
-            for j in range(1,len(bb)+1):
-                choices=(0,scores[i-1,j-1]+(similarity[i-1,j-1]-.68)*3,scores[i-1,j]-.35,scores[i,j-1]-.35)
-                way=int(np.argmax(choices));scores[i,j]=choices[way];trace[i,j]=way
-        i,j=np.unravel_index(np.argmax(scores),scores.shape);peak=float(scores[i,j])
-        if best and peak<=best['alignment_strength']: continue
-        end_i,end_j=i,j;matches=[]
-        while i>0 and j>0 and trace[i,j]:
-            way=trace[i,j]
-            if way==1: matches.append(float(similarity[i-1,j-1]));i-=1;j-=1
-            elif way==2: i-=1
-            else: j-=1
-        coverage=min((end_i-i)/max(1,len(aa)),(end_j-j)/max(1,len(bb)))
-        best={'alignment_strength':peak,'tonal_score':round((sum(matches)/max(1,len(matches)))*100,1),
-              'coverage':round(coverage*100,1),'pitch_shift':shift if shift<=6 else shift-12,
-              'a_from':round(i/a['chroma_hz'],1),'a_to':round(end_i/a['chroma_hz'],1),
-              'b_from':round(j/b['chroma_hz'],1),'b_to':round(end_j/b['chroma_hz'],1)}
-    return best
+    check_stop(stop_event)
+    aa,bb=np.array(a['chroma']),np.array(b['chroma'])
+    similarity=np.stack([aa@np.roll(bb,shift,axis=1).T for shift in range(12)])
+    scores=np.zeros((12,len(aa)+1,len(bb)+1),dtype='float32')
+    trace=np.zeros_like(scores,dtype='uint8')
+    shifts=np.arange(12)[:,None]
+    for diagonal in range(2,len(aa)+len(bb)+1):
+        if diagonal % 32 == 0: check_stop(stop_event)
+        ii=np.arange(max(1,diagonal-len(bb)),min(len(aa),diagonal-1)+1);jj=diagonal-ii
+        choices=np.stack([np.zeros((12,len(ii))),scores[:,ii-1,jj-1]+(similarity[:,ii-1,jj-1]-.68)*3,
+                          scores[:,ii-1,jj]-.35,scores[:,ii,jj-1]-.35])
+        ways=choices.argmax(axis=0)
+        scores[:,ii,jj]=np.take_along_axis(choices,ways[None,:,:],axis=0)[0]
+        trace[:,ii,jj]=ways
+    shift,i,j=np.unravel_index(np.argmax(scores),scores.shape);peak=float(scores[shift,i,j])
+    end_i,end_j=i,j;matches=[]
+    while i>0 and j>0 and trace[shift,i,j]:
+        way=trace[shift,i,j]
+        if way==1: matches.append(float(similarity[shift,i-1,j-1]));i-=1;j-=1
+        elif way==2: i-=1
+        else: j-=1
+    coverage=min((end_i-i)/max(1,len(aa)),(end_j-j)/max(1,len(bb)))
+    return {'alignment_strength':peak,'tonal_score':round((sum(matches)/max(1,len(matches)))*100,1),
+            'coverage':round(coverage*100,1),'pitch_shift':int(shift if shift<=6 else shift-12),
+            'a_from':round(i/a['chroma_hz'],1),'a_to':round(end_i/a['chroma_hz'],1),
+            'b_from':round(j/b['chroma_hz'],1),'b_to':round(end_j/b['chroma_hz'],1)}
 
 
 def compare(a,b,stop_event=None,rhythm_cutoff=90,tonal_cutoff=85):
