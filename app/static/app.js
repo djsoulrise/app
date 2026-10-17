@@ -619,6 +619,7 @@ pages.audio = async () => {
   <p><label><input id="chorusWhole" type="checkbox" ${o.whole_library!==false?'checked':''}> Trazi audio veze u celoj biblioteci, nezavisno od key-a, tagova i zanra</label></p>
   <div class="row"><label><input id="chorusRhythm" type="checkbox" ${o.rhythm?'checked':''}> Ritam cele pesme (drugi nivo)</label><input id="chorusR" type="number" min="50" max="100" value="${o.rhythm_cutoff}" style="width:80px"> %</div>
   <p><label><input id="chorusLearned" type="checkbox" ${o.learned_model!==false?'checked':''}> AI pomoc pri pronalazenju kandidata</label> · sam AI skor ne odlucuje o poklapanju</p>
+  <div class="row"><label>AI kratke fraze — eksperimentalni prag</label><input id="chorusPeriodic" type="number" min="50" max="100" value="${o.periodic_cutoff||62}" style="width:80px"></div><p class="mut small">Ritam ukljucuje i AI fraze. Skor nije procenat sigurnosti; kontrola izmesanog redosleda mora imati najmanje 4 poena manje. Novi sken je potreban. Model nije dodatno treniran.</p>
   <div class="row"><label><input id="chorusTonal" type="checkbox" ${o.tonal?'checked':''}> Zajednicka muzika / fraza (prvi nivo)</label><input id="chorusT" type="number" min="50" max="100" value="${o.tonal_cutoff}" style="width:80px"> %</div>
   <p>Redosled: 1. potvrdjeno poklapanje muzicke fraze, bez obzira na tekst i jezik; 2. prihvatljiv ritam cele pesme iz skenirane baze; 3. izvorni peti predlog samo levo. LIVE prikazuje do 10 rezultata iz prvog uspesnog nivoa i ne dopunjava se slabim pesmama.</p>
   <button class="pri" data-act="chorussave">Sacuvaj audio uslove</button></div>
@@ -634,7 +635,7 @@ pages.audio = async () => {
   }
   await poll();state.timer=setInterval(()=>poll().catch(()=>{}),2500);
 };
-actions.chorussave=async()=>{await api('/api/audio/chorus/settings',{live_scan:$('#chorusLive').checked,whole_library:$('#chorusWhole').checked,learned_model:$('#chorusLearned').checked,rhythm:$('#chorusRhythm').checked,tonal:$('#chorusTonal').checked,rhythm_cutoff:+$('#chorusR').value,tonal_cutoff:+$('#chorusT').value});toast('Audio uslovi sacuvani');};
+actions.chorussave=async()=>{await api('/api/audio/chorus/settings',{live_scan:$('#chorusLive').checked,whole_library:$('#chorusWhole').checked,learned_model:$('#chorusLearned').checked,rhythm:$('#chorusRhythm').checked,tonal:$('#chorusTonal').checked,rhythm_cutoff:+$('#chorusR').value,tonal_cutoff:+$('#chorusT').value,periodic_cutoff:+$('#chorusPeriodic').value});toast('Audio uslovi sacuvani');};
 
 function audioDiagnosticHtml(d) {
   if (!d || !d.current_id) return '';
@@ -737,7 +738,7 @@ function renderLiveAudio(data) {
   const actions=t=>`<div class="live-actions"><button data-act="copysong" data-id="${t.id}" title="Copy Song">Copy</button><button data-act="dragsong" data-id="${t.id}">Prevuci</button><button data-act="reveal" data-id="${t.id}">Fajl</button></div>`;
   const row=(t,i,kind)=>{
     if(!t)return `<div class="live-audio-item live-empty"><span class="live-number">${i+1}</span><span class="mut">${kind==='audio'?'Nema potvrdjenog audio rezultata':'Nema dovoljno podataka u listama'}</span></div>`;
-    const detail=kind==='audio'?(t.phrase_verification? t.phrase_verification.seconds.toFixed(1)+'s zajednicke muzike':t.match_kind||'Audio ritam'):`${t.times}× u ${t.lists} lista / veceri`;
+    const detail=kind==='audio'?(t.phrase_verification? (t.phrase_verification.kind==='periodic'?'AI fraza · TEST':t.phrase_verification.seconds.toFixed(1)+'s zajednicke muzike'):t.match_kind||'Audio ritam'):`${t.times}× u ${t.lists} lista / veceri`;
     const score=kind==='audio'?t.score.toFixed(1):t.times+'×';
     const tip=kind==='audio'?detail:(t.sources||[]).join(' · ');
     return `<div class="live-audio-item ${kind==='audio'?'audio-match':'history-match'}" data-history-side="${kind}"><span class="live-number">${i+1}</span><div class="live-item-body"><div class="live-title" title="${esc((t.artist?t.artist+' - ':'')+t.title)}">${name(t)}</div><div class="live-secondary"><span title="${esc(tip)}">${esc(detail)}</span>${actions(t)}</div></div><span class="live-score">${esc(score)}</span></div>`;

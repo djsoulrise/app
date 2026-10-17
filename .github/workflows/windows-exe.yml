@@ -46,6 +46,8 @@ jobs:
           python -m unittest discover -s tests -p "test_event_exports.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_history_context.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_loop_audio.py" -v
       - name: Test live UI and Start Stop controls
         run: |
           npm install --no-save playwright
@@ -65,7 +67,7 @@ jobs:
               completed = subprocess.run([str(pathlib.Path('dist/DJ Miljan Assistant.exe').resolve()), '--build-self-test', str(report)], env=env, check=False, timeout=180)
               if completed.returncode: raise RuntimeError(report.read_text(encoding='utf-8') if report.exists() else 'Packaged self-test failed before writing report')
               result = json.loads(report.read_text(encoding='utf-8'))
-              assert result['ok'] and result['native_file_drop'] and result['shortcuts_backend'] and result['phrase_features'] and result['learned_model'] and result['frozen'] and result['decoder_in_bundle'], result
+              assert result['ok'] and result['native_file_drop'] and result['shortcuts_backend'] and result['phrase_features'] and result['periodic_features'] and result['learned_model'] and result['frozen'] and result['decoder_in_bundle'], result
       - name: Check packaged WebView restore
         shell: python
         run: |

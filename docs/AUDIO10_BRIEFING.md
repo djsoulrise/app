@@ -149,3 +149,24 @@ recommendation algorithm still uses them.
   (consistent landmark time offsets identify a fragment within a recording).
 * ONNX Runtime privacy controls:
   https://github.com/microsoft/onnxruntime/blob/main/docs/Privacy.md
+
+## Audio 11 experimental periodic-context branch
+
+The short drum-pattern experiment is now integrated as an additional, explicitly
+experimental first-level audio criterion. The first four original suggestions
+remain unchanged. Existing melodic and sample verification are retained.
+`app/loop_audio.py` repeats each 24-second CQT in the pretrained network's
+fixed context instead of zero padding. Windows cover the entire file every
+12 seconds, including the first and last window. Each window also has a
+seeded one-second-block shuffled control. Both cross-control directions use
+the same window search budget. A candidate requires cosine >=62 and at least
+four score points above the strongest shuffled control; settings expose the
+cutoff. This is a heuristic evidence gate, not calibrated probability or proof
+of a copied sample, and no new network was trained.
+
+The actual application integration on ten provided recordings plus ten public
+preview distractors now accepts Rasputin/Alex in both directions (68.975 versus
+control54.248), preserving the other verified pairs. Large-library precision
+is not established. Periodic signatures use cache version4; a full rescan is
+required. Whole-track rhythm cache remains reusable. The library Start/Stop
+and default OFF live-scan switch remain independent.

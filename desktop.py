@@ -71,8 +71,11 @@ def main() -> None:
         phrase=phrase_match.extract(signal)
         assert phrase_match.unpack(phrase['chroma']).shape[1]==12
         assert phrase_match.compare(phrase,phrase)['seconds']>=8
+        from app import loop_audio
+        periodic=loop_audio.extract(signal)
+        assert periodic and loop_audio.compare(periodic,periodic)['score']>99
         report = sys.argv[sys.argv.index('--build-self-test') + 1]
-        Path(report).write_text(json.dumps({'ok': True, 'native_file_drop': True, 'shortcuts_backend': True, 'learned_model': True, 'phrase_features': True, 'frozen': bool(getattr(sys, 'frozen', False)),
+        Path(report).write_text(json.dumps({'ok': True, 'native_file_drop': True, 'shortcuts_backend': True, 'learned_model': True, 'phrase_features': True, 'periodic_features': True, 'frozen': bool(getattr(sys, 'frozen', False)),
                                            'decoder_in_bundle': str(Path(decoder).resolve()).startswith(str(Path(sys._MEIPASS).resolve()))}), encoding='utf-8')
         return
     port = int(SETTINGS["port"])
