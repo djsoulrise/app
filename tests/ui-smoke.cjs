@@ -21,7 +21,7 @@ const {chromium}=require('playwright');
   else if(u.pathname==='/api/search')body=[track(1),track(2)];
   else if(u.pathname==='/api/chorus/compare'){chorusBody=JSON.parse(route.request().postData());chorusResult={a:{...track(1),start:30,end:60},b:{...track(2),start:45,end:75},rhythm_score:94,bpm_a:120,bpm_b:124,rhythm_pass:true,tonal_pass:false,tonal:{tonal_score:70,coverage:50,pitch_shift:0,a_from:30,a_to:45,b_from:45,b_to:60},notes:[],disclaimer:'Test'};body={started:true};}
   else if(u.pathname==='/api/ui-preferences'){if(route.request().method()==='POST')uiPrefs=JSON.parse(route.request().postData());body=uiPrefs;}
-  else if(u.pathname==='/api/shortcuts')body=shortcuts;
+  else if(u.pathname==='/api/shortcuts')body={...shortcuts,sequence:events.at(-1)?.sequence || 0};
   else if(u.pathname==='/api/shortcuts/ports')body={ports:['DJ Assistant']};
   else if(u.pathname==='/api/shortcuts/events')body={events:events.filter(e=>e.sequence>+u.searchParams.get('after'))};
   else if(u.pathname==='/api/shortcuts/keyboard'){const d=JSON.parse(route.request().postData());if(d.binding)shortcuts.settings.keyboard[d.action]=d.binding;else delete shortcuts.settings.keyboard[d.action];body=shortcuts;}
