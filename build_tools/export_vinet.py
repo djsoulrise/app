@@ -2,6 +2,8 @@
 import hashlib
 import json
 import sys
+import os
+os.environ['ORT_DISABLE_TELEMETRY']='1'
 import urllib.request
 from pathlib import Path
 import numpy as np

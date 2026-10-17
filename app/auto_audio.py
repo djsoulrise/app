@@ -7,10 +7,10 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from . import audio_rhythm, chorus, config, db, learned_audio
+from . import audio_rhythm, chorus, config, db, learned_audio, phrase_match, sample_match
 from .scan_control import check_stop, ScanCancelled
 
-VERSION = 2
+VERSION = 3
 REVISION = 0
 LOCK = threading.Lock()
 CONTROL = threading.RLock()
@@ -20,24 +20,30 @@ CURRENT = None
 THREAD = None
 RESULT = None
 STATE = {'phase':'Miruje', 'track_id':None, 'error':None}
-DEFAULTS = dict(rhythm=True, tonal=True, rhythm_cutoff=80, tonal_cutoff=80, auto_scan=True, whole_library=True, learned_model=True, neural_cutoff=75)
+DEFAULTS = dict(rhythm=True, tonal=True, rhythm_cutoff=97, tonal_cutoff=80, live_scan=False, auto_scan=False, whole_library=True, learned_model=True, neural_cutoff=75)
 
 
 def settings(body=None):
     result = {**DEFAULTS, **config.SETTINGS.get('chorus_audio', {})}
+    result['rhythm_cutoff']=round(audio_rhythm.threshold()*100,6)
     if body is not None:
-        for key in ('rhythm','tonal','auto_scan','whole_library','learned_model'):
+        for key in ('rhythm','tonal','auto_scan','live_scan','whole_library','learned_model'):
             if key in body:
                 if not isinstance(body[key], bool): raise ValueError('Opcija mora biti ukljucena ili iskljucena.')
                 result[key] = body[key]
+        if 'auto_scan' in body and 'live_scan' not in body:result['live_scan']=body['auto_scan']
         for key in ('rhythm_cutoff','tonal_cutoff','neural_cutoff'):
             if key in body:
                 value = float(body[key])
                 if not 50 <= value <= 100: raise ValueError('Prag mora biti od 50 do 100%.')
                 result[key] = value
         if not result['rhythm'] and not result['tonal']: raise ValueError('Ukljuci bar jedan audio uslov.')
+        result['auto_scan']=result['live_scan']
+        if not result['live_scan'] and STATE.get('scanning'):STOP.set()
+        config.SETTINGS['audio_similarity_threshold']=audio_rhythm.threshold(result['rhythm_cutoff']/100)
         config.SETTINGS['chorus_audio'] = result
         config.save(config.SETTINGS)
+    result['auto_scan']=result['live_scan']
     return result
 
 
@@ -129,6 +135,7 @@ def analyze(track, stop_event=None):
         samples=np.memmap(pcm,dtype='<f4',mode='r')
         try:
             sections=select_sections(samples,json.loads(key),stop_event=stop_event)
+            song_phrase=phrase_match.extract(samples,stop_event=stop_event)
             data=[]
             for section in sections:
                 check_stop(stop_event)
@@ -137,6 +144,8 @@ def analyze(track, stop_event=None):
                 if learned_audio.available():
                     features['neural']=learned_audio.signatures(samples,section,stop_event=stop_event)
                 data.append({**section,'features':features})
+            if data: data[0]['song_phrase']=song_phrase
+            _store_whole_rhythm(track,samples,stat,stop_event)
             if not data: raise ValueError('U kandidatima za refren nema dovoljno audio detalja.')
         finally: del samples
     # Do not cache a signature against a file/cue revision that changed mid-read.
@@ -148,6 +157,20 @@ def analyze(track, stop_event=None):
     global REVISION
     REVISION+=1
     return db.one('SELECT * FROM auto_chorus WHERE track_id=?',(track['id'],))
+
+
+def _store_whole_rhythm(track,samples,stat,stop_event):
+    """Maintain the second-level audio index using the already decoded PCM."""
+    audio_rhythm.init()
+    if audio_rhythm.valid(db.one('SELECT * FROM audio_rhythm WHERE track_id=?',(track['id'],)),track): return
+    try:
+        features=audio_rhythm.analyze_pcm(samples,stop_event=stop_event);status,error='ok',None
+    except ValueError as exc:
+        features,status,error={},'error',str(exc)
+    check_stop(stop_event)
+    db.conn().execute('INSERT OR REPLACE INTO audio_rhythm VALUES(?,?,?,?,?,?,?,?)',
+        (track['id'],track['path'],stat.st_size,stat.st_mtime_ns,audio_rhythm.VERSION,status,json.dumps(features),error))
+    db.conn().commit();audio_rhythm.SCAN_REVISION+=1
 
 
 def refresh_cues():
@@ -214,66 +237,63 @@ def tonal_hint(a,b):
 
 
 def passing(item, options):
-    rp=options['rhythm'] and item['rhythm_reliable'] and item['rhythm_score']>=options['rhythm_cutoff']
-    nn=item.get('neural_score',0)
-    model_evidence=options.get('learned_model',True) and nn>0
-    # A weak model result must not be overridden by generic chord similarity.
-    sequence=item['tonal_reliable'] and item['tonal_score']>=options['tonal_cutoff'] and (not model_evidence or nn>=75 or item['tonal_score']>=90)
-    # Borderline learned similarities need near-best retrieval evidence, while
-    # stronger learned matches can admit several versions of the same work.
-    neural=model_evidence and nn>=options.get('neural_cutoff',75) and (nn>=85 or item.get('neural_near_best',True)) and item['tonal_reliable'] and item['tonal_score']>=70
-    tp=options['tonal'] and (sequence or neural)
-    return bool(rp),bool(tp)
+    # An embedding score is retrieval evidence, never proof of a shared phrase.
+    # The full-track rhythm index is the next level, not blended into this one.
+    phrase=item.get('phrase_verification') or {}
+    tp=options['tonal'] and (phrase_match.reliable(phrase,options['tonal_cutoff']) or (sample_match.reliable(item.get('sample_verification',dict(count=0,anchors=0,seconds=0,ratio=0))) and item['tonal_score']>=options['tonal_cutoff']))
+    return False,bool(tp)
 
 
-def rank(track, source, stop_event):
-    init();sections=json.loads(source['data']);all_hits=[]
-    rows=db.rows('SELECT * FROM auto_chorus WHERE status="ok" AND version=?',(VERSION,))
-    for row in rows:
+def rank(track, source, stop_event, publish=None):
+    init();sections=json.loads(source['data']);song=sections[0].get('song_phrase');all_hits=[]
+    targets={t['id']:t for t in db.rows('SELECT * FROM tracks')}
+    for row in db.rows('SELECT * FROM auto_chorus WHERE status="ok" AND version=?',(VERSION,)):
         check_stop(stop_event)
-        if row['track_id']==track['id']: continue
-        target=db.one('SELECT * FROM tracks WHERE id=?',(row['track_id'],))
-        if not target or not valid(row,target): continue
-        best=None;tonal_pairs=[];neural_score=0.;neural_pair=None
-        targets=json.loads(row['data'])
+        target=targets.get(row['track_id'])
+        if row['track_id']==track['id'] or not target or not valid(row,target): continue
+        parts=json.loads(row['data']);other=parts[0].get('song_phrase')
+        if not song or not other:continue
+        best_r=(0.,False,None,None);nn=0.
         for a in sections:
-            for b in targets:
-                score,reliable,delta=rhythm(a['features'],b['features'])
-                entry=dict(id=target['id'],artist=target['artist'],title=target['title'],score=score,groove=score,rhythm_score=score,rhythm_reliable=reliable,tempo_delta=delta*100,audio={'bpm':b['features']['bpm']},tonal_score=0.,tonal_reliable=False,tonal_checked=False,source_section={k:v for k,v in a.items() if k!='features'},target_section={k:v for k,v in b.items() if k!='features'},reasons=[],track=target)
-                if best is None or score>best['rhythm_score']: best=entry
-                tonal_pairs.append((tonal_hint(a['features'],b['features']),a,b))
-                nn_score,source_start,target_start=learned_audio.similarity(a['features'].get('neural'),b['features'].get('neural'))
-                if nn_score>neural_score: neural_score=nn_score;neural_pair=(a,b,source_start,target_start)
-        hint,a,b=max(tonal_pairs,key=lambda p:p[0]);best['_tonal_pair']=(a,b);best['_hint']=hint
-        best['neural_score']=round(neural_score,2);best['_neural_pair']=neural_pair
-        all_hits.append(best)
-    # Verify a broad ordered-chroma shortlist using local alignment. Screening is
-    # disclosed; unverified candidates can pass rhythm, never tonal.
-    selected={h['id']:h for h in sorted(all_hits,key=lambda h:h['_hint'],reverse=True)[:120]}
-    if settings().get('learned_model'):
-        selected.update({h['id']:h for h in sorted(all_hits,key=lambda h:h['neural_score'],reverse=True)[:120] if h['neural_score']>0})
+            for b in parts:
+                score,reliable,_=rhythm(a['features'],b['features'])
+                if best_r[2] is None or score>best_r[0]:best_r=(score,reliable,a,b)
+                nn=max(nn,learned_audio.similarity(a['features'].get('neural'),b['features'].get('neural'))[0])
+        hint=phrase_match.screen(song,other,stop_event)
+        a,b=best_r[2:]
+        clean=lambda part:{k:v for k,v in part.items() if k not in ('features','song_phrase')}
+        hit=dict(id=target['id'],artist=target['artist'],title=target['title'],score=0.,groove=best_r[0],
+            rhythm_score=best_r[0],rhythm_reliable=best_r[1],tonal_score=0.,tonal_reliable=False,tonal_checked=False,
+            neural_score=round(nn,2),source_section=clean(a),target_section=clean(b),reasons=[],track=target,
+            _hint=hint,_song=other,_sample_hint=sample_match.screen(song['sample'],other['sample']) if song.get('sample') and other.get('sample') else 0.)
+        all_hits.append(hit)
+    # Independent phrase retrieval ensures a genuine phrase is not eliminated
+    # by the largest generic embedding cosine elsewhere in a large library.
+    selected={h['id']:h for h in sorted(all_hits,key=lambda h:h['_hint']['score'],reverse=True)[:48]}
+    if settings()['learned_model']:
+        selected.update({h['id']:h for h in sorted(all_hits,key=lambda h:h['neural_score'],reverse=True)[:24]})
+    selected.update({h['id']:h for h in sorted(all_hits,key=lambda h:h['_sample_hint'],reverse=True)[:24] if h['_sample_hint']>0})
     shortlist=list(selected.values()) if settings()['tonal'] else []
     for i,hit in enumerate(shortlist):
         check_stop(stop_event)
-        STATE['phase']=f'Proveravam tonalne delove {i+1}/{len(shortlist)}'
-        a,b=hit['_tonal_pair'];aa,bb=a['features'],b['features'];aligned=chorus.align(aa,bb,stop_event)
-        seconds=min(aligned['a_to']-aligned['a_from'],aligned['b_to']-aligned['b_from'])
-        hit['tonal_checked']=True;hit['tonal_score']=aligned['tonal_score'];hit['tonal_reliable']=aligned['coverage']>=60 and seconds>=8 and min(aa['tonal_variation'],bb['tonal_variation'])>=.04
-        hit['tonal_alignment']=aligned;hit['tonal_source_section']={k:v for k,v in a.items() if k!='features'};hit['tonal_target_section']={k:v for k,v in b.items() if k!='features'}
-        if hit['_neural_pair']:
-            na,nb,ns,nt=hit['_neural_pair']
-            hit['neural_source_start']=ns;hit['neural_target_start']=nt
-            if na is not a or nb is not b:
-                aligned_nn=chorus.align(na['features'],nb['features'],stop_event)
-                seconds_nn=min(aligned_nn['a_to']-aligned_nn['a_from'],aligned_nn['b_to']-aligned_nn['b_from'])
-                reliable_nn=aligned_nn['coverage']>=60 and seconds_nn>=8 and min(na['features']['tonal_variation'],nb['features']['tonal_variation'])>=.04
-                if reliable_nn and (not hit['tonal_reliable'] or aligned_nn['tonal_score']>hit['tonal_score']):
-                    hit.update(tonal_score=aligned_nn['tonal_score'],tonal_reliable=True,tonal_alignment=aligned_nn,
-                               tonal_source_section={k:v for k,v in na.items() if k!='features'},tonal_target_section={k:v for k,v in nb.items() if k!='features'})
-    best_neural=max((hit['neural_score'] for hit in all_hits),default=0.)
+        STATE['phase']=f'Proveravam redosled fraze {i+1}/{len(shortlist)}'
+        result=phrase_match.compare(song,hit['_song'],stop_event,hint=hit['_hint'])
+        if song.get('sample') and hit['_song'].get('sample'):
+            fragment=sample_match.compare(song['sample'],hit['_song']['sample'],stop_event)
+            hit['sample_verification']=fragment
+            if sample_match.reliable(fragment):
+                sample_score=min(100,80+20*fragment['ratio'])
+                if sample_score>result['score'] or not phrase_match.reliable(result,settings()['tonal_cutoff']):
+                    result=dict(score=sample_score,strength=fragment['anchors'],seconds=fragment['seconds'],density=fragment['ratio'],
+                        contrast=fragment['ratio'],a_start=fragment['a_start'],b_start=fragment['b_start'],kind='sample')
+        hit.update(phrase_verification=result,tonal_checked=True,tonal_score=result['score'],
+            tonal_reliable=phrase_match.reliable(result,50),
+            tonal_source_section={'start':result['a_start'],'end':result['a_start']+result['seconds']},
+            tonal_target_section={'start':result['b_start'],'end':result['b_start']+result['seconds']})
+        if publish and (i==0 or i%4==3 or passing(hit,settings())[1]):
+            publish([{k:v for k,v in h.items() if not k.startswith('_')} for h in all_hits])
     for hit in all_hits:
-        hit['neural_near_best']=hit['neural_score']>=best_neural-2.5
-        hit.pop('_tonal_pair',None);hit.pop('_hint',None);hit.pop('_neural_pair',None)
+        hit.pop('_hint',None);hit.pop('_song',None);hit.pop('_sample_hint',None)
     return all_hits
 
 
@@ -286,7 +306,7 @@ def ensure(track_id):
         if THREAD and THREAD.is_alive():
             if STATE.get('track_id') != CURRENT: STOP.set()
             return
-        track=db.one('SELECT path FROM tracks WHERE id=?',(CURRENT,))
+        track=db.one('SELECT * FROM tracks WHERE id=?',(CURRENT,))
         def stamp(path):
             try:
                 stat=os.stat(path);return (path,stat.st_size,stat.st_mtime_ns)
@@ -295,6 +315,12 @@ def ensure(track_id):
         key=(CURRENT,REVISION,json.dumps(settings(),sort_keys=True),source_token)
         if STATE.get('key')==key: return
         if RESULT and RESULT.get('source_token')!=source_token: RESULT=None
+        if not settings()['live_scan']:
+            init();cached=db.one('SELECT * FROM auto_chorus WHERE track_id=?',(CURRENT,))
+            if not track or not valid(cached,track) or cached['status']!='ok':
+                RESULT=None
+                STATE.update(track_id=CURRENT,error=None,phase='Live scan OFF — koristim samo sacuvanu bazu',key=key)
+                return
         STOP=threading.Event();event=STOP
         def worker():
             global RESULT,REVISION
@@ -304,18 +330,26 @@ def ensure(track_id):
                 if not track: raise ValueError('Trenutna pesma nije u biblioteci.')
                 cached=db.one('SELECT * FROM auto_chorus WHERE track_id=?',(tid,))
                 if not valid(cached,track):
-                    if not settings()['auto_scan']: raise ValueError('Trenutna pesma nije skenirana. Ukljuci automatski sken ili skeniraj biblioteku.')
+                    if not settings()['live_scan']: raise ValueError('Live scan je iskljucen. Koristim samo sacuvanu bazu; za nove audio podatke pokreni Start u Audio ritam.')
                     STATE['phase']='Automatski skeniram refren trenutne pesme'
-                    with LOCK: cached=analyze(track,event)
+                    STATE['scanning']=True
+                    try:
+                        with LOCK: cached=analyze(track,event)
+                    finally:STATE['scanning']=False
                 if cached['status']!='ok': raise ValueError(cached.get('error') or 'Ponovi skeniranje pesme.')
                 rank_revision=REVISION
-                hits=rank(track,cached,event);check_stop(event)
+                def publish_partial(hits):
+                    global RESULT
+                    with CONTROL:
+                        if CURRENT==tid and not event.is_set():
+                            RESULT={'track_id':tid,'source_token':source_token,'hits':hits,'sections':[{k:v for k,v in s.items() if k not in ('features','song_phrase')} for s in json.loads(cached['data'])],'complete':False}
+                hits=rank(track,cached,event,publish_partial);check_stop(event)
                 with CONTROL:
                     if CURRENT==tid:
-                        RESULT={'track_id':tid,'source_token':source_token,'hits':hits,'sections':[{k:v for k,v in s.items() if k!='features'} for s in json.loads(cached['data'])]}
-                        STATE.update(phase='Spremno',key=(tid,REVISION,json.dumps(settings(),sort_keys=True),source_token))
+                        changed_during_rank=REVISION!=rank_revision
+                        RESULT={'track_id':tid,'source_token':source_token,'hits':hits,'sections':[{k:v for k,v in s.items() if k not in ('features','song_phrase')} for s in json.loads(cached['data'])],'complete':True}
                         REVISION+=1
-                        STATE['key']=(tid,rank_revision+1,key[2],source_token)
+                        STATE.update(phase='Spremno',key=None if changed_during_rank else (tid,REVISION,json.dumps(settings(),sort_keys=True),source_token))
             except ScanCancelled:
                 STATE.update(phase='Promenjena trenutna pesma',key=None)
             except Exception as exc:
@@ -328,35 +362,51 @@ def ensure(track_id):
 def fifth(current, pool, excluded_ids, diagnostics):
     from .names import core_title
     ensure(current['id']);options=settings()
-    report=dict(engine='chorus',current_id=current['id'],threshold=options['rhythm_cutoff']/100,options=options,pool=len(pool),compared=0,counts={},top=[],accepted_top=[],sections=[],current_error=None,shortlist_limit=240,learned_model=learned_audio.info())
+    report=dict(engine='chorus',current_id=current['id'],threshold=options['rhythm_cutoff']/100,options=options,
+        pool=len(pool),compared=0,counts={},top=[],accepted_top=[],sections=[],current_error=None,
+        shortlist_limit=96,learned_model=learned_audio.info(),selected_stage='normal',
+        priority=['Potvrdjena fraza / refren','Ritam cele pesme iz baze','Izvorni predlog'])
     with CONTROL: result=RESULT
-    if not result or result['track_id']!=current['id']:
-        report['current_error']=STATE.get('error') or STATE['phase'];diagnostics.update(report)
-        return None,report['current_error']
-    ids={t['id'] for t in pool}-set(excluded_ids);hits=[]
-    for original in result['hits']:
-        if original['id'] not in ids: continue
-        hit={k:v for k,v in original.items() if k!='track'};rp,tp=passing(hit,options)
-        hit.update(rhythm_pass=rp,tonal_pass=tp,accepted=rp or tp,score=max(hit['rhythm_score'] if rp else 0,hit['tonal_score'] if tp else 0) if rp or tp else max(hit['rhythm_score'] if options['rhythm'] else 0,hit['tonal_score'] if options['tonal'] else 0),match_kind='R + T' if rp and tp else 'Ritam' if rp else 'Motiv' if tp else 'Ne prolazi')
-        if tp and options.get('learned_model') and hit.get('neural_score',0)>=options.get('neural_cutoff',75):
-            hit['score']=max(hit['score'],hit['neural_score']);hit['match_kind']+=' + AI'
-        hit['audio_score']=hit['score']
-        if options.get('learned_model') and options['tonal'] and hit.get('neural_score',0)>0:
-            hit['score']=round(.65*hit['score']+.35*hit['neural_score'],2)
-        if not hit['accepted']: hit['reasons']=['Ne prolazi aktivne audio uslove (detaljna provera do 240 kandidata po AI potpisu i frazi).']
-        hits.append(hit)
-    hits.sort(key=lambda h:(h['accepted'],h['rhythm_pass'] and h['tonal_pass'],h['score'],h['rhythm_score']),reverse=True)
+    ids={t['id'] for t in pool}-set(excluded_ids)
+    hits=[]
+    if result and result['track_id']==current['id']:
+        for original in result['hits']:
+            if original['id'] not in ids:continue
+            hit={k:v for k,v in original.items() if k!='track'};rp,tp=passing(hit,options)
+            hit.update(rhythm_pass=rp,tonal_pass=tp,accepted=tp,score=hit['tonal_score'],
+                match_kind='Potvrdjena fraza' if tp else 'Nije potvrdjena fraza')
+            if not tp:hit['reasons']=['AI skor i opsti beat nisu potvrda poklapanja. Fraza nije prosla redosled, trajanje i kontrolu slucajnog poklapanja.']
+            hits.append(hit)
+        report['sections']=result['sections'];report['complete']=result.get('complete',True)
+    else:report['current_error']=STATE.get('error') or STATE['phase']
+    hits.sort(key=lambda h:(h['accepted'],h['score'],h.get('phrase_verification',{}).get('strength',0),h['id']*-1),reverse=True)
     unique=[];seen=set()
     for hit in hits:
-        identity=core_title(hit['artist'] or '',hit['title'] or '')
-        if hit['accepted'] and identity not in seen: unique.append(hit);seen.add(identity)
-    report.update(compared=len(hits),top=hits[:20],accepted_top=unique[:10],sections=result['sections'],counts={'prolazi':len(unique),'ne_prolazi':len(hits)-sum(h['accepted'] for h in hits)})
-    diagnostics.update(report)
-    if not unique: return None,'Nema refrena koji prolaze aktivne audio uslove.'
-    hit=unique[0];track=next(t for t in pool if t['id']==hit['id'])
-    return {**track,'score':hit['score'],'label':'AUDIO RITAM','audio_match':True,'why':[f"Refren: {hit['match_kind']} · R {hit['rhythm_score']:.1f}% / motiv {hit['tonal_score']:.1f}% / AI {hit.get('neural_score',0):.1f}%"]},None
+        identity=core_title(hit.get('artist') or '',hit.get('title') or '') or str(hit['id'])
+        if hit['accepted'] and identity not in seen:unique.append(hit);seen.add(identity)
+    report.update(compared=len(hits),top=hits[:20],accepted_top=unique[:10],counts={'potvrdjena_fraza':len(unique)})
+    if unique:
+        report['selected_stage']='chorus';diagnostics.update(report)
+        hit=unique[0];track=next(t for t in pool if t['id']==hit['id']);proof=hit['phrase_verification']
+        proof_note=(f"Zajednicki audio fragment: {proof['seconds']:.1f}s; {hit['sample_verification']['anchors']} vremenski uskladjenih spektralnih tacaka." if proof.get('kind')=='sample' else f"Potvrdjena fraza: {proof['seconds']:.1f}s; redosled {proof['density']:.0%}; kontrast prema kontrolama {proof['contrast']:.2f}x.")
+        return {**track,'score':hit['score'],'label':'REFREN / FRAZA','audio_match':True,'audio_stage':'chorus',
+            'why':[proof_note,
+                   f"Izvor {proof['a_start']:.1f}s / cilj {proof['b_start']:.1f}s. AI sluzi za pronalazenje kandidata, ne za presudu."]},None
+    # Level two uses the existing saved whole-track descriptors and its own
+    # quality / tempo / threshold gates. No generic excerpt beat fills LIVE.
+    fallback={}
+    audio,message=audio_rhythm.fifth(current,pool,excluded_ids,fallback) if options['rhythm'] else (None,'Ritam cele pesme je iskljucen.')
+    report['whole_rhythm']=fallback
+    if audio:
+        report['selected_stage']='whole_rhythm'
+        report['accepted_top']=[dict(h,match_kind='Ritam cele pesme',rhythm_score=h['groove'],tonal_score=0.,tonal_pass=False,
+             rhythm_pass=True,neural_score=0.,source_section={},target_section={}) for h in fallback['accepted_top']]
+        audio.update(audio_stage='whole_rhythm');diagnostics.update(report)
+        return audio,None
+    report['fallback_reason']=message;diagnostics.update(report)
+    return None,'Nema potvrdjene fraze ni prihvatljivog ritma cele pesme; koristi se izvorni peti predlog.'
 
 
 def status():
     init()
-    return {'settings':settings(),'counts':{r['status']:r['n'] for r in db.rows('SELECT status,COUNT(*) n FROM auto_chorus GROUP BY status')},'live':dict(STATE),'revision':REVISION,'model':learned_audio.info(),'note':'Obuceni model trazi slicne muzicke verzije po audio potpisima. Do 240 kandidata se dodatno proverava kroz frazu. Skor nije verovatnoca ni dokaz kopiranja.'}
+    return {'settings':settings(),'counts':{r['status']:r['n'] for r in db.rows('SELECT status,COUNT(*) n FROM auto_chorus WHERE version=? GROUP BY status',(VERSION,))},'previous_index':db.one('SELECT COUNT(*) n FROM auto_chorus WHERE version!=?',(VERSION,))['n'],'live':dict(STATE),'revision':REVISION,'model':learned_audio.info(),'note':'AI pronalazi kandidate; poklapanje se potvrdjuje redosledom fraze u vremenu i kontrolom izmesanih delova. Peti i LIVE: potvrdjena fraza, zatim strogi ritam cele pesme, zatim samo levo izvorni predlog. LIVE se ne dopunjava nasumicno.'}

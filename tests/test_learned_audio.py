@@ -19,19 +19,19 @@ class LearnedAudioTests(unittest.TestCase):
   x=learned.tensor(sound);self.assertEqual(x.shape,(1,1,84,400));self.assertTrue(np.isfinite(x).all());self.assertGreater(x.max(),.99)
   signature=learned.signatures(sound,{'start':0,'end':13});vectors=learned.vectors(signature['vectors'])
   self.assertEqual(vectors.shape,(1,512));self.assertGreater(learned.similarity(signature,signature)[0],99.9)
- def test_neural_score_needs_ordered_phrase_evidence(self):
-  hit=dict(rhythm_reliable=False,rhythm_score=0,tonal_reliable=True,tonal_score=75,neural_score=90)
+ def test_neural_cosine_alone_does_not_prove_a_shared_phrase(self):
+  hit=dict(rhythm_reliable=True,rhythm_score=99,tonal_reliable=True,tonal_score=99,neural_score=99)
+  self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,False))
+  hit['phrase_verification']=dict(score=95,seconds=16,density=.95,strength=56,contrast=3.)
   self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,True))
-  self.assertEqual(auto.passing(hit,{**auto.DEFAULTS,'learned_model':False}),(False,False))
+  self.assertEqual(auto.passing(hit,{**auto.DEFAULTS,'learned_model':False}),(False,True))
   self.assertEqual(auto.passing(hit,{**auto.DEFAULTS,'tonal':False}),(False,False))
-  hit['tonal_reliable']=False;self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,False))
-  hit.update(tonal_reliable=True,tonal_score=60);self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,False))
- def test_borderline_models_need_near_best_and_generic_chords_cannot_override_model(self):
-  hit=dict(rhythm_reliable=False,rhythm_score=0,tonal_reliable=True,tonal_score=72,neural_score=78,neural_near_best=True)
-  self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,True))
-  hit['neural_near_best']=False;self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,False))
-  hit.update(tonal_score=82,neural_score=65);self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,False))
-  hit['tonal_score']=95;self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,True))
+ def test_high_cosine_cannot_override_short_or_incoherent_phrase(self):
+  hit=dict(rhythm_reliable=False,rhythm_score=0,tonal_reliable=True,tonal_score=99,neural_score=99)
+  hit['phrase_verification']=dict(score=99,seconds=2,density=.99,strength=8,contrast=3.)
+  self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,False))
+  hit['phrase_verification'].update(seconds=16,strength=56,density=.4)
+  self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,False))
  def test_stop_and_unknown_model(self):
   stop=threading.Event();stop.set()
   with self.assertRaises(ScanCancelled):learned.tensor(np.ones(11025*13,dtype='float32'),stop_event=stop)

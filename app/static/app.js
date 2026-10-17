@@ -79,7 +79,7 @@ function performanceBadges(t) {
 }
 
 // ---------- navigation ----------
-const PAGES = [['sada', 'Sada'], ['lib', 'Biblioteka'], ['tags', 'Tagovi'], ['dupes', 'Duplikati'], ['audio', 'Audio ritam'], ['grids', 'Fleksibilni gridovi'], ['pl', 'Plejliste'],
+const PAGES = [['sada', 'Sada'], ['lib', 'Biblioteka'], ['dupes', 'Duplikati'], ['audio', 'Audio ritam'], ['grids', 'Fleksibilni gridovi'], ['pl', 'Plejliste'],
   ['eve', 'Vece'], ['req', 'Zahtevi'], ['ai', 'AI'], ['trend', 'Trendovi'], ['shortcuts', 'Precice'], ['set', 'Podesavanja']];
 function go(p) {
   if (state.keyLearn || (state.page === 'shortcuts' && p !== 'shortcuts')) cancelShortcutLearn();
@@ -105,8 +105,12 @@ async function refreshStatus() {
       `Broadcast: ${b.running ? (b.last_connect ? 'povezan' : 'ceka') : 'ugasen'} | ` +
       (j.running ? `<b>${esc(j.phase)} ${j.done}/${j.total}</b>` : j.error ? `<span style="color:var(--bad)">${esc(j.error)}</span>` : '');
     state.status = s;
+    if(state.dayExportPending && j.kind==='day_export' && !j.running && state.page==='eve'){
+      state.dayExportPending=false;
+      $('#dayExportResult').textContent=j.error?'Izvoz nije zavrsen: '+j.error:'Izvoz: '+(j.result?.path||'')+' · Kopirano '+(j.result?.copied||0)+' · Nedostaje '+(j.result?.missing?.length||0);
+    }
     updateScanControls(j);
-    if (state.jobWasRunning && !j.running && !j.error) { toast(j.cancelled ? 'Zaustavljeno — rezultati sacuvani' : 'Zavrseno'); if (state.page !== 'sada') go(state.page); }
+    if (state.jobWasRunning && !j.running && !j.error) { toast(j.cancelled ? 'Zaustavljeno — rezultati sacuvani' : 'Zavrseno'); if (j.kind==='day_export' && state.page==='eve') { $('#dayExportResult').textContent='Izvoz: '+(j.result?.path||'')+' · Kopirano '+(j.result?.copied||0)+' · Nedostaje '+(j.result?.missing?.length||0); } else if (state.page !== 'sada') go(state.page); }
     state.jobWasRunning = j.running;
   } catch {}
 }
@@ -142,7 +146,7 @@ pages.sada = async () => {
       <span id="modes"></span></div>
     <div id="res"></div>
     <div class="console-layout"><section class="suggestions-panel"><div class="panel-heading"><h3>Sledecih <b>5</b></h3><span>SELEKCIJA / MIX</span></div><div id="sug"></div></section>
-    <aside class="live-panel"><div class="panel-heading"><h3><i class="live-dot"></i> LIVE <b>10</b></h3><span>AUDIO RITAM</span></div><div id="liveaudio">Cekam trenutnu pesmu...</div></aside></div>
+    <aside class="live-panel"><div class="panel-heading"><h3><i class="live-dot"></i> LIVE <b>3 + 6</b></h3><span>AUDIO / ISTORIJA</span></div><div id="liveaudio">Cekam trenutnu pesmu...</div></aside></div>
     <div class="console-footer"><button data-act="consolehistory">Veceras pusteno <span class="mut">/ istorija</span></button><button data-act="consoledetails">Detalji preporuka <span class="mut">/ audio uslovi</span></button></div><div id="played" class="hidden"></div><div id="suggestionDiagnostics" class="hidden"></div>`;
   drawModes(); state._drawModes = drawModes;
   $('#q').addEventListener('input', guard(async e => {
@@ -266,8 +270,6 @@ pages.lib = async () => {
       <button class="pri" data-act="libgo">Trazi</button></div>
     <datalist id="taglist"></datalist>
     <div class="row card"><span>Izabrano: <b id="selcount">${state.sel.size}</b></span>
-      <input id="bulkadd" placeholder="dodaj tag(ove)" list="taglist"><button data-act="bulkadd">Dodaj</button>
-      <input id="bulkrem" placeholder="ukloni tag" list="taglist"><button data-act="bulkrem">Ukloni</button>
       <button data-act="selnone">Ponisti izbor</button></div>
     <div id="libtable"></div>`;
   api('/api/tags').then(t => $('#taglist').innerHTML = t.filter(x => !x.junk).map(x => `<option value="${esc(x.display)}">`).join(''));
@@ -299,29 +301,11 @@ async function openTrack(id) {
   const t = await api('/api/track/' + id);
   $('#modalbox').innerHTML = `<h2>${name(t)}</h2><div>${badges(t)}</div>
     <p class="mut small">${esc(t.path)}<br>Komentar iz Traktora: ${esc(t.comment)}</p>
-    <label>Tagovi (odvojeni zarezom)</label><textarea id="etags" style="min-height:60px">${esc((t.tags || []).map(x => x.t).join(', '))}</textarea>
     <div class="row"><label>Energija (1-10, prazno = automatski)</label><input id="eenergy" type="number" min="1" max="10" value="${t.energy_src === 'ručno' ? t.energy : ''}" style="width:90px"></div>
     <div class="row"><label>Stil (rucno, prazno = automatski)</label><select id="estyle"><option value="">automatski</option>${Object.entries(state.styleLabels).map(([k, v]) => `<option value="${k}" ${t.style_override === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>
     <div class="row"><button class="pri" data-act="savetrack" data-id="${id}">Sacuvaj</button><button data-act="use" data-id="${id}">Postavi kao trenutnu</button><button data-act="closemodal">Zatvori</button></div>`;
   $('#modal').classList.remove('hidden');
 }
-
-// --- Tagovi ---
-pages.tags = async () => {
-  const [tags, sug] = await Promise.all([api('/api/tags'), api('/api/tag-suggestions')]);
-  $('#main').innerHTML = `<h2>Tagovi</h2>
-    <p class="mut">Tagovi se cuvaju samo u bazi aplikacije (ne diraju Traktor ni fajlove). "Otpad" su tagovi iz preuzetih fajlova; mozes ih grupno ignorisati.</p>
-    <div class="row"><button data-act="aitags" class="pri">AI predlog tagova za netagovane</button>
-      <button data-act="junkall">Oznaci oznacene kao otpad</button></div>
-    ${sug.length ? `<h3>Predlozi (potvrdi)</h3><div class="card">${sug.map(s => `<div class="row"><input type="checkbox" class="sg" data-tid="${s.track_id}" data-tag="${esc(s.tag)}" checked>
-      ${esc(s.artist)} - ${esc(s.title)} <span class="badge acc">${esc(s.display)}</span></div>`).join('')}
-      <button class="ok" data-act="sgyes">Prihvati oznacene</button> <button data-act="sgno">Odbaci oznacene</button></div>` : ''}
-    <table><tr><th></th><th>Tag</th><th>Pesama</th><th>Status</th><th></th></tr>${tags.map(t => `<tr><td><input type="checkbox" class="tg" data-n="${esc(t.name)}"></td>
-      <td>${esc(t.display)}</td><td>${t.n}</td><td>${t.junk ? '<span class="badge bad">otpad</span>' : ''}${t.ignored ? '<span class="badge">ignorisan</span>' : ''}</td>
-      <td><button class="sm" data-act="tagren" data-n="${esc(t.name)}">Preimenuj/spoji</button>
-      <button class="sm" data-act="tagign" data-n="${esc(t.name)}" data-v="${t.ignored ? 0 : 1}">${t.ignored ? 'Vrati' : 'Ignorisi'}</button>
-      <button class="sm bad" data-act="tagdel" data-n="${esc(t.name)}">Obrisi</button></td></tr>`).join('')}</table>`;
-};
 
 // --- Duplikati ---
 pages.dupes = async () => {
@@ -362,22 +346,23 @@ function trackList(items, extra) {
 const DEFAULT_PARTS = 'Docek; 3; 30\nVecera; 4; 60\nPrvi ples; 5; 15\nTorta; 6; 15\nVrhunac; 9; 60\nKraj; 8; 30';
 pages.eve = async () => {
   const evs = await api('/api/events');
-  const ev = evs.find(e => e.active) || evs[0];
+  const ev = evs.find(e => e.id===state.viewEvent) || evs.find(e => e.active) || evs[0];
   const parts = ev ? ev.parts : [];
   const plays = ev ? await api('/api/plays?event_id=' + ev.id) : [];
+  plays.sort((a,b)=>a.ts.localeCompare(b.ts)||a.id-b.id);
   $('#main').innerHTML = `<h2>Vece i istorija</h2>
     <div class="row"><input id="evn" placeholder="Naziv novog dogadjaja"><button data-act="evnew" class="pri">Novi dogadjaj</button>
-      ${evs.map(e => `<button class="tab ${e.active ? 'on' : ''}" data-act="evact" data-id="${e.id}">${esc(e.name)} (${e.plays})</button>`).join('')}</div>
-    ${ev ? `<h3>Plan: ${esc(ev.name)}</h3>
+      ${evs.map(e => `<button class="tab ${e.id===ev?.id ? 'on' : ''}" data-act="evview" data-id="${e.id}">${esc(e.name)} (${e.plays})</button>`).join('')}</div>
+    ${ev ? `<h3>Plan: ${esc(ev.name)}</h3>${ev.active?'':'<button data-act="evact" data-id="'+ev.id+'">Aktiviraj ovo vece</button>'}
     <div class="curve">${parts.map(p => `<div style="height:${p.energy * 10}%" data-act="partsug" data-id="${ev.id}" data-pos="${p.pos}"><span>${esc(p.name)}<br>E${p.energy}</span></div>`).join('')}</div>
     <textarea id="parts" placeholder="naziv; energija; minuta">${esc(parts.length ? parts.map(p => `${p.name}; ${p.energy}; ${p.minutes}`).join('\n') : DEFAULT_PARTS)}</textarea>
     <button data-act="saveparts" data-id="${ev.id}">Sacuvaj plan</button> <span class="mut small">Klik na stub u krivi = predlozi za taj deo.</span>
     <div id="partres"></div>
-    <h3>Odsvirano (${plays.length})</h3><div class="card">${plays.map((p, i) => `<div class="row"><span class="mut small">${esc(p.ts.slice(11, 16))}</span> ${esc(p.artist)} - ${esc(p.title)}
+    <h3>Odsvirano (${plays.length})</h3><div class="card">${plays.map((p, i) => `${i===0||plays[i-1].ts.slice(0,10)!==p.ts.slice(0,10)?'<h4>'+esc(p.ts.slice(0,10))+'</h4>':''}<div class="row"><span class="mut small">${esc(p.ts.slice(11, 16))}</span> ${esc(p.artist)} - ${esc(p.title)}
       <button class="sm ${p.rating > 0 ? 'ok' : ''}" data-act="rate" data-id="${p.id}" data-r="1" data-reload="1">palo</button>
       <button class="sm ${p.rating < 0 ? 'bad' : ''}" data-act="rate" data-id="${p.id}" data-r="-1" data-reload="1">nije palo</button>
       ${i > 0 ? `<button class="sm" data-act="note" data-a="${plays[i - 1].track_id}" data-b="${p.track_id}">beleska o prelazu</button>` : ''}
-      <button class="sm bad" data-act="delplay" data-id="${p.id}">x</button></div>`).join('')}</div>` : ''}`;
+      <button class="sm bad" data-act="delplay" data-id="${p.id}">x</button></div>${i===plays.length-1||plays[i+1].ts.slice(0,10)!==p.ts.slice(0,10)?'<div class="row day-export"><b>Kraj dana '+esc(p.ts.slice(0,10))+'</b><button data-act="dayexport" data-id="'+ev.id+'" data-day="'+esc(p.ts.slice(0,10))+'" data-kind="m3u">Izvezi M3U listu</button><button data-act="dayexport" data-id="'+ev.id+'" data-day="'+esc(p.ts.slice(0,10))+'" data-kind="songs">Izvezi pesme iz dana</button></div>':''}`).join('')}</div><div id="dayExportResult" class="card mut">Izvoz se cuva u folderu iz Podesavanja. Pesme se kopiraju; paket sadrzi i prenosivu M3U8 listu.</div>` : ''}`;
 };
 
 // --- Zahtevi ---
@@ -510,20 +495,11 @@ const actions = {
   sel: el => { el.checked ? state.sel.add(+el.dataset.id) : state.sel.delete(+el.dataset.id); $('#selcount').textContent = state.sel.size; },
   selall: el => { $$('[data-act=sel]').forEach(c => { c.checked = el.checked; actions.sel(c); }); },
   selnone: () => { state.sel.clear(); $$('[data-act=sel]').forEach(c => c.checked = false); $('#selcount').textContent = 0; },
-  bulkadd: async () => { await api('/api/tracks/tag', {ids: [...state.sel], add: $('#bulkadd').value.split(',').map(x => x.trim()).filter(Boolean)}); toast('Dodato'); await loadLib(); },
-  bulkrem: async () => { await api('/api/tracks/tag', {ids: [...state.sel], remove: $('#bulkrem').value.split(',').map(x => x.trim()).filter(Boolean)}); toast('Uklonjeno'); await loadLib(); },
   edit: el => openTrack(+el.dataset.id),
   savetrack: async el => {
-    await api('/api/track/' + el.dataset.id, {tags: $('#etags').value.split(',').map(x => x.trim()).filter(Boolean), energy: $('#eenergy').value, style: $('#estyle').value});
+    await api('/api/track/' + el.dataset.id, {energy: $('#eenergy').value, style: $('#estyle').value});
     closeModal(); toast('Sacuvano'); if (state.page === 'lib') await loadLib();
   },
-  // tags
-  aitags: async () => { const r = await api('/api/ai/tag-suggest', {}); toast('Novih predloga: ' + r.added); go('tags'); },
-  sgyes: async () => sgApply(true), sgno: async () => sgApply(false),
-  tagren: async el => { const n = prompt('Novi naziv (ako vec postoji, tagovi se spajaju):', el.dataset.n); if (n) { await api('/api/tags/rename', {name: el.dataset.n, new: n}); go('tags'); } },
-  tagign: async el => { await api('/api/tags/flag', {names: [el.dataset.n], ignored: +el.dataset.v}); go('tags'); },
-  tagdel: async el => { if (confirm('Obrisati tag sa svih pesama?')) { await api('/api/tags/delete', {name: el.dataset.n}); go('tags'); } },
-  junkall: async () => { await api('/api/tags/flag', {names: $$('.tg:checked').map(c => c.dataset.n), junk: 1, ignored: 1}); go('tags'); },
   audiosearch: async () => audioLoadSources(),
   audiomatches: audioLoadMatches,
   audiocurrent: async () => { const n = await api('/api/now'); if (!n.track_id) throw new Error('Nema trenutne pesme.'); state.audioSource = n.track_id; await audioLoadSources(n.track_id); await audioLoadMatches(); },
@@ -561,8 +537,18 @@ const actions = {
   pldel: async el => { if (confirm('Obrisati plejlistu?')) { await api('/api/playlists/' + el.dataset.id, undefined, 'DELETE'); go('pl'); } },
   learn: async el => { await api('/api/src-playlists/' + el.dataset.id, {use: el.checked ? 1 : 0}); toast('Preracunato'); },
   // events
-  evnew: async () => { const n = $('#evn').value.trim(); if (n) { const r = await api('/api/events', {name: n}); await api(`/api/events/${r.id}/activate`, {}); go('eve'); } },
-  evact: async el => { await api(`/api/events/${el.dataset.id}/activate`, {}); go('eve'); },
+  evview: async el => { state.viewEvent=+el.dataset.id; go('eve'); },
+  dayexport: async el => {
+    el.disabled=true;
+    try {
+      const r=await api(`/api/events/${el.dataset.id}/days/${el.dataset.day}/export`,{kind:el.dataset.kind});
+      $('#dayExportResult').textContent=r.path?`Izvezeno: ${r.playlist}. Nedostaje ${r.missing.length} pesama.`:'Kopiranje je pokrenuto. Napredak je na vrhu; po zavrsetku ovde ce biti putanja.';
+      state.dayExportPending=!r.path;
+      await refreshStatus();
+    } finally {el.disabled=false;}
+  },
+  evnew: async () => { const n = $('#evn').value.trim(); if (n) { const r = await api('/api/events', {name: n}); await api(`/api/events/${r.id}/activate`, {}); state.viewEvent=r.id;go('eve'); } },
+  evact: async el => { await api(`/api/events/${el.dataset.id}/activate`, {});state.viewEvent=+el.dataset.id; go('eve'); },
   saveparts: async el => {
     const parts = $('#parts').value.split('\n').map(l => l.split(';').map(x => x.trim())).filter(a => a[0]).map(a => ({name: a[0], energy: +a[1] || 5, minutes: +a[2] || 30}));
     await api(`/api/events/${el.dataset.id}/parts`, {parts}); go('eve');
@@ -602,10 +588,7 @@ const actions = {
   refresh: async () => { await saveSettings(); await api('/api/refresh', {}); toast('Osvezavanje pokrenuto'); },
   rebuild: async () => { await api('/api/learning/rebuild', {}); toast('Preracunato'); },
 };
-async function sgApply(accept) {
-  const items = $$('.sg:checked').map(c => ({track_id: +c.dataset.tid, tag: c.dataset.tag}));
-  await api('/api/tag-suggestions/apply', {items, accept}); go('tags');
-}
+
 function closeModal() { $('#modal').classList.add('hidden'); $('#modalbox').innerHTML = ''; }
 
 document.addEventListener('click', e => {
@@ -628,19 +611,19 @@ api('/api/settings').then(s => { state.strict = s.style_strictness || 'normalno'
 
 pages.audio = async () => {
   const s = await api('/api/audio/chorus/status'), o=s.settings;
-  $('#main').innerHTML = `<h2>Audio ritam — automatski refreni</h2>
-  <p>Indeks refrena: <b>${s.counts.ok || 0}</b> pesama; greske: ${s.counts.error || 0}. Za AI potpise je potreban novi sken; prethodni rezultati ostaju sacuvani. Model je ukljucen u EXE i radi offline.</p>
+  $('#main').innerHTML = `<h2>Audio ritam — ista ili slicna muzika</h2>
+  <p>Indeks muzickih fraza: <b>${s.counts.ok || 0}</b> pesama; greske: ${s.counts.error || 0}. Ova verzija proverava muzicke fraze kroz celu pesmu. Za nove osobine pokreni Start; stari ritam ostaje sacuvan. Model je ukljucen u EXE i radi offline.</p>
   <div class="card"><h3>Skeniraj celu biblioteku</h3>${scanButtons('chorus_library')}<p>Start nastavlja od novih ili promenjenih pesama. Stop cuva zavrsene rezultate. Traktor kolekcija i audio fajlovi se samo citaju.</p></div>
   <div class="card"><h3>Automatski peti predlog i LIVE lista</h3>
-  <label><input id="chorusAuto" type="checkbox" ${o.auto_scan?'checked':''}> Automatski skeniraj trenutnu pesmu ako nije u indeksu</label>
+  <label><input id="chorusLive" type="checkbox" ${o.live_scan?'checked':''}> Live scan: <b id="liveScanLabel">${o.live_scan?'ON':'OFF'}</b> — analiziraj neskeniranu pesmu pri ucitavanju</label><p class="mut small">OFF: nema automatskog audio skena. Pretraga sacuvane baze i tvoja istorija rade normalno. Start za celu biblioteku radi nezavisno.</p>
   <p><label><input id="chorusWhole" type="checkbox" ${o.whole_library!==false?'checked':''}> Trazi audio veze u celoj biblioteci, nezavisno od key-a, tagova i zanra</label></p>
-  <div class="row"><label><input id="chorusRhythm" type="checkbox" ${o.rhythm?'checked':''}> Ritam</label><input id="chorusR" type="number" min="50" max="100" value="${o.rhythm_cutoff}" style="width:80px"> %</div>
-  <p><label><input id="chorusLearned" type="checkbox" ${o.learned_model!==false?'checked':''}> Obuceni AI model za muzicke motive</label> · prag AI <input id="chorusNN" type="number" min="50" max="100" value="${o.neural_cutoff||75}" style="width:75px"> %</p>
-  <div class="row"><label><input id="chorusTonal" type="checkbox" ${o.tonal?'checked':''}> Motiv / melodijska fraza</label><input id="chorusT" type="number" min="50" max="100" value="${o.tonal_cutoff}" style="width:80px"> %</div>
-  <p>Prolazi slican ritam ILI melodijski motiv; oba prolaza imaju prednost. Motiv prati promene fraze, nije isti key niti identitet glasa. Ritam se poredi posle normalizacije audio tempa; sam BPM nije dokaz poklapanja. Bez prolaza nema nasumicne audio dopune.</p>
+  <div class="row"><label><input id="chorusRhythm" type="checkbox" ${o.rhythm?'checked':''}> Ritam cele pesme (drugi nivo)</label><input id="chorusR" type="number" min="50" max="100" value="${o.rhythm_cutoff}" style="width:80px"> %</div>
+  <p><label><input id="chorusLearned" type="checkbox" ${o.learned_model!==false?'checked':''}> AI pomoc pri pronalazenju kandidata</label> · sam AI skor ne odlucuje o poklapanju</p>
+  <div class="row"><label><input id="chorusTonal" type="checkbox" ${o.tonal?'checked':''}> Zajednicka muzika / fraza (prvi nivo)</label><input id="chorusT" type="number" min="50" max="100" value="${o.tonal_cutoff}" style="width:80px"> %</div>
+  <p>Redosled: 1. potvrdjeno poklapanje muzicke fraze, bez obzira na tekst i jezik; 2. prihvatljiv ritam cele pesme iz skenirane baze; 3. izvorni peti predlog samo levo. LIVE prikazuje do 10 rezultata iz prvog uspesnog nivoa i ne dopunjava se slabim pesmama.</p>
   <button class="pri" data-act="chorussave">Sacuvaj audio uslove</button></div>
   <div class="card"><h3>Sta je pronadjeno za trenutnu pesmu?</h3><p id="autoAudioState"></p><div id="autoAudioResults"></div></div>
-  <details><summary>Kako se bira deo / ogranicenja</summary><p>Nazvani Traktor cue refren / chorus / hook ima prednost. Bez njega se traze ponavljajuci audio delovi; izbor refrena je procena. Prikazuju se vremenski intervali. Traktor waveform kes se ne cita; talas i osobine izvode se iz audija.</p><p>${esc(s.note)} Prva cetiri predloga ostaju ista. Peti i LIVE koriste isti audio skup, bez ponavljanja; zabrane i vec pustene pesme ostaju iskljucene.</p></details>`;
+  <details><summary>Kako se bira deo / ogranicenja</summary><p>Cue refren / chorus / hook pomaze AI indeksiranju. Dodatna provera muzicke fraze i audio fragmenata pretrazuje celu pesmu, ukljucujuci deo van cue-a. Prikazuju se vremenski intervali. Traktor waveform kes se ne cita; talas i osobine izvode se iz audija.</p><p>${esc(s.note)} Prva cetiri predloga ostaju ista. Peti i LIVE koriste isti audio skup, bez ponavljanja; zabrane i vec pustene pesme ostaju iskljucene.</p></details>`;
   updateScanControls(state.status?.job || {});
   async function poll(){
     const [status,d]=await Promise.all([api('/api/audio/chorus/status'),api('/api/audio/chorus/results')]);
@@ -651,17 +634,17 @@ pages.audio = async () => {
   }
   await poll();state.timer=setInterval(()=>poll().catch(()=>{}),2500);
 };
-actions.chorussave=async()=>{await api('/api/audio/chorus/settings',{auto_scan:$('#chorusAuto').checked,whole_library:$('#chorusWhole').checked,learned_model:$('#chorusLearned').checked,neural_cutoff:+$('#chorusNN').value,rhythm:$('#chorusRhythm').checked,tonal:$('#chorusTonal').checked,rhythm_cutoff:+$('#chorusR').value,tonal_cutoff:+$('#chorusT').value});toast('Audio uslovi sacuvani');};
+actions.chorussave=async()=>{await api('/api/audio/chorus/settings',{live_scan:$('#chorusLive').checked,whole_library:$('#chorusWhole').checked,learned_model:$('#chorusLearned').checked,rhythm:$('#chorusRhythm').checked,tonal:$('#chorusTonal').checked,rhythm_cutoff:+$('#chorusR').value,tonal_cutoff:+$('#chorusT').value});toast('Audio uslovi sacuvani');};
 
 function audioDiagnosticHtml(d) {
   if (!d || !d.current_id) return '';
   if (d.engine==='chorus') return `<details class="card" open><summary>Audio ritam / refren — nalaz</summary>
-  <p>${d.learned_model?.available?'Obuceni model: Discogs-VINet (offline).':'AI model nije dostupan u ovoj verziji.'} AI prag ${d.options.neural_cutoff||75}%.</p>
-  <p>Ritam ${d.options.rhythm?'ukljucen':'iskljucen'} ${d.options.rhythm_cutoff}% · tonalno ${d.options.tonal?'ukljuceno':'iskljuceno'} ${d.options.tonal_cutoff}% · prolaz ILI</p>
+  <p>${d.learned_model?.available?'Obuceni model: Discogs-VINet (offline).':'AI model nije dostupan u ovoj verziji.'} AI sluzi za izbor kandidata; fraza se proverava nezavisno.</p>
+  <p>Fraza → ritam cele pesme → izvorni peti. Izabrani nivo: <b>${esc(({chorus:'Zajednicka muzika',whole_rhythm:'Ritam cele pesme',normal:'Izvorni predlog'})[d.selected_stage]||'Izvorni predlog')}</b>. Prag fraze ${d.options.tonal_cutoff}%; prag ritma ${d.options.rhythm_cutoff}%.</p>
   ${d.current_error?'<p>'+esc(d.current_error)+'</p>':''}
   ${(d.sections||[]).map(s=>`<p>Izvor ${timecode(s.start)}–${timecode(s.end)} · ${esc(s.reason)}</p>`).join('')}
   <p>${d.options.whole_library?'Biblioteka bez key/genre filtera':'Izvorni filteri'}: ${d.pool}; audio uporedjeno ${d.compared}. Tonalno: detaljna provera do ${d.shortlist_limit} kandidata iz cele indeksirane biblioteke.</p>
-  ${(d.top||[]).map(t=>`<p>${name(t)} — <b>${esc(t.match_kind)}</b> · R ${t.rhythm_score.toFixed(1)}% / motiv ${t.tonal_checked===false?'nije provereno':t.tonal_score.toFixed(1)+'%'}  · AI ${(t.neural_score||0).toFixed(1)}% · ritam ${timecode(t.target_section.start)}–${timecode(t.target_section.end)}${t.tonal_target_section?' · tonalno '+timecode(t.tonal_target_section.start)+'–'+timecode(t.tonal_target_section.end):''}</p>`).join('') || '<p>Nema audio rezultata.</p>'}</details>`;
+  ${(d.top||[]).map(t=>`<p>${name(t)} — <b>${esc(t.match_kind)}</b> · R ${t.rhythm_score.toFixed(1)}% / motiv ${t.tonal_checked===false?'nije provereno':t.tonal_score.toFixed(1)+'%'}  · AI ${(t.neural_score||0).toFixed(1)}% · ritam ${timecode(t.target_section.start)}–${timecode(t.target_section.end)}${t.tonal_target_section?' · fraza '+timecode(t.tonal_target_section.start)+'–'+timecode(t.tonal_target_section.end):''}${t.phrase_verification?' · trajanje '+t.phrase_verification.seconds+'s · redosled '+Math.round(t.phrase_verification.density*100)+'% · kontrast '+t.phrase_verification.contrast+'x':''}</p>`).join('') || '<p>Nema audio rezultata.</p>'}</details>`;
   return `<details class="card"><summary>Zasto jeste / nije izabran AUDIO RITAM?</summary>
   <p>Prag: ${(d.threshold*100).toFixed(0)}%; kandidata posle izvornih filtera: ${d.pool}; audio uporedjeno: ${d.compared}.</p>
   ${d.current_error ? '<p>' + esc(d.current_error) + '</p>' : `<p>Trenutna pesma, audio: ${d.current_audio.bpm} BPM; periodicnost ${d.current_audio.periodicity}; stabilnost ${d.current_audio.consistency}; promenljiv tempo: ${d.current_audio.variable_tempo_suspected ? 'sumnja' : 'ne'}.</p>`}
@@ -748,14 +731,19 @@ function updateScanControls(job) {
 }
 
 function renderLiveAudio(data) {
-  const element = $('#liveaudio');
-  if (!element) return;
-  const report = data.audio_diagnostics || {}, items = report.accepted_top || [];
-  element.className = 'live-content';
-  element.innerHTML = `<div class="live-context"><span>${report.engine==='chorus'?'Refren R '+report.options.rhythm_cutoff+'% / T '+report.options.tonal_cutoff+'%':'Prag '+(report.threshold ? (report.threshold*100).toFixed(0)+'%' : '?')}</span><span>isti uslovi kao 5. predlog</span><p class="sr-only">${data.current ? name(data.current) : ''}</p></div>` +
-    (items.length ? '<div class="live-list">'+items.map((t,i) => `<div class="live-audio-item"><span class="live-number">${String(i+1).padStart(2,'0')}</span><div class="live-item-body"><div class="live-title" title="${esc((t.artist ? t.artist+' - ' : '')+t.title)}">${name(t)}</div>
-      <div class="live-secondary"><span>${t.match_kind ? 'AI '+(t.neural_score||0).toFixed(0)+' · R '+t.rhythm_score.toFixed(0)+' · M '+(t.tonal_checked===false?'—':t.tonal_score.toFixed(0)) : t.audio.bpm+' BPM · Δ '+t.tempo_delta.toFixed(1)+'%'}</span><div class="live-actions"><button data-act="copysong" data-id="${t.id}" title="Copy Song">Copy</button><button data-act="dragsong" data-id="${t.id}">Prevuci</button><button data-act="reveal" data-id="${t.id}" title="Prikazi u Exploreru">Fajl</button></div></div></div><span class="live-score">${t.score.toFixed(1)}<small>%</small></span></div>`).join('')+'</div>' : `<div class="empty-state"><span class="mut">${esc(data.audio_status || 'Nema rezultata koji prolaze audio uslove.')}</span></div>`) +
-    (items.length && items.length<10 ? `<p class="live-note">Prolazi ${items.length} pesama; bez nasumicne dopune.</p>` : '');
+  const element=$('#liveaudio');if(!element)return;
+  const report=data.audio_diagnostics||{},audio=(report.accepted_top||[]).slice(0,3),history=data.history_context||{before:[],after:[]};
+  element.className='live-content';
+  const actions=t=>`<div class="live-actions"><button data-act="copysong" data-id="${t.id}" title="Copy Song">Copy</button><button data-act="dragsong" data-id="${t.id}">Prevuci</button><button data-act="reveal" data-id="${t.id}">Fajl</button></div>`;
+  const row=(t,i,kind)=>{
+    if(!t)return `<div class="live-audio-item live-empty"><span class="live-number">${i+1}</span><span class="mut">${kind==='audio'?'Nema potvrdjenog audio rezultata':'Nema dovoljno podataka u listama'}</span></div>`;
+    const detail=kind==='audio'?(t.phrase_verification? t.phrase_verification.seconds.toFixed(1)+'s zajednicke muzike':t.match_kind||'Audio ritam'):`${t.times}× u ${t.lists} lista / veceri`;
+    const score=kind==='audio'?t.score.toFixed(1):t.times+'×';
+    const tip=kind==='audio'?detail:(t.sources||[]).join(' · ');
+    return `<div class="live-audio-item ${kind==='audio'?'audio-match':'history-match'}" data-history-side="${kind}"><span class="live-number">${i+1}</span><div class="live-item-body"><div class="live-title" title="${esc((t.artist?t.artist+' - ':'')+t.title)}">${name(t)}</div><div class="live-secondary"><span title="${esc(tip)}">${esc(detail)}</span>${actions(t)}</div></div><span class="live-score">${esc(score)}</span></div>`;
+  };
+  const group=(label,items,kind)=>`<section class="live-group" data-live-group="${kind}"><h4>${label}</h4><div class="live-group-rows">${Array.from({length:3},(_,i)=>row(items[i],i,kind)).join('')}</div></section>`;
+  element.innerHTML=`<div class="live-context"><span>3 audio · 3 PRE · 3 POSLE</span><span>${report.complete===false?'audio provera u toku':'za trenutnu pesmu'}</span><p class="sr-only">${data.current?name(data.current):''}</p></div><div class="live-list live-context-list">${group('AUDIO — ZAJEDNICKA MUZIKA',audio,'audio')}${group('PRE — TVOJA ISTORIJA',history.before||[],'before')}${group('POSLE — TVOJA ISTORIJA',history.after||[],'after')}</div>`;
 }
 
 document.addEventListener('input', e => {
@@ -936,3 +924,13 @@ actions.consoledetails = () => consoleModal('Detalji preporuka','#suggestionDiag
 
 // Display automatic chorus intervals.
 const timecode=s=>Math.floor(s/60)+':'+String(Math.round(s%60)).padStart(2,'0');
+
+// Live scanning is an explicit opt-in, independent of the library Start button.
+document.addEventListener('change',e=>{
+ if(e.target.id==='chorusLive')guard(async()=>{
+   const enabled=e.target.checked;
+   const saved=await api('/api/audio/chorus/settings',{live_scan:enabled});
+   $('#liveScanLabel').textContent=saved.live_scan?'ON':'OFF';
+   toast(saved.live_scan?'Live scan ukljucen':'Live scan iskljucen; koristi se sacuvana baza');
+ })();
+});

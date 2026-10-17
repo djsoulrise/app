@@ -181,3 +181,17 @@ body.large-text .live-actions{flex-shrink:0}
 @media(max-height:700px) and (min-width:900px){.live-audio-item{padding:1px 1px}.live-secondary{margin-top:1px}.live-actions button{padding:1px 3px}}
 
 @media(max-height:700px) and (min-width:900px){.rec-meta .badge{line-height:1.05}.rec-actions button{padding:2px 4px}}
+
+/* Three audio matches and six actual playlist neighbors share the same panel. */
+.live-list.live-context-list{display:grid;grid-template-rows:repeat(3,minmax(0,1fr));gap:3px;overflow:hidden}
+.live-group{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.live-group h4{font-size:calc(9px * var(--font-scale,1));letter-spacing:.7px;color:var(--acc);margin:2px 0;padding:2px 0;border-bottom:1px solid #53583d;flex:0 0 auto}
+.live-group-rows{display:grid;grid-template-rows:repeat(3,minmax(0,1fr));flex:1;min-height:0}
+.live-empty{font-size:calc(9px * var(--font-scale,1));opacity:.7}
+.live-group[data-live-group="before"] h4,.live-group[data-live-group="after"] h4{color:#b6c7b5}
+
+.live-group[data-live-group="audio"]{border-left:2px solid #b89251;padding-left:5px}
+.live-group[data-live-group="before"],.live-group[data-live-group="after"]{border-left:2px solid #6f91a1;padding-left:5px;background:linear-gradient(90deg,#26343a80,transparent)}
+.live-group[data-live-group="before"] h4,.live-group[data-live-group="after"] h4{color:#a4c2ce}
+.history-match .live-number,.history-match .live-score{color:#9abac9}
+.history-match .live-secondary>span{color:#91abb8}

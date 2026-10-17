@@ -67,8 +67,12 @@ def main() -> None:
         signal=(.4*np.sin(2*np.pi*(220+40*np.sin(t))*t)+.1*np.sin(2*np.pi*80*t)*np.exp(-(t%.5)*40)).astype('float32')
         signature=learned_audio.signatures(signal,{'start':0,'end':13})
         assert learned_audio.similarity(signature,signature)[0]>99.9
+        from app import phrase_match
+        phrase=phrase_match.extract(signal)
+        assert phrase_match.unpack(phrase['chroma']).shape[1]==12
+        assert phrase_match.compare(phrase,phrase)['seconds']>=8
         report = sys.argv[sys.argv.index('--build-self-test') + 1]
-        Path(report).write_text(json.dumps({'ok': True, 'native_file_drop': True, 'shortcuts_backend': True, 'learned_model': True, 'frozen': bool(getattr(sys, 'frozen', False)),
+        Path(report).write_text(json.dumps({'ok': True, 'native_file_drop': True, 'shortcuts_backend': True, 'learned_model': True, 'phrase_features': True, 'frozen': bool(getattr(sys, 'frozen', False)),
                                            'decoder_in_bundle': str(Path(decoder).resolve()).startswith(str(Path(sys._MEIPASS).resolve()))}), encoding='utf-8')
         return
     port = int(SETTINGS["port"])

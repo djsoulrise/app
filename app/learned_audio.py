@@ -4,6 +4,7 @@ from functools import lru_cache
 import hashlib
 import json
 import os
+os.environ['ORT_DISABLE_TELEMETRY']='1'
 from pathlib import Path
 import threading
 import zlib
@@ -29,6 +30,9 @@ def session():
     with SESSION_LOCK:
         if SESSION is None:
             import onnxruntime as ort
+            # Library audio is processed locally. Disable the runtime's optional
+            # telemetry before constructing an inference session.
+            ort.disable_telemetry_events()
             path=ASSETS/'discogs-vinet.onnx'
             metadata=json.loads((ASSETS/'discogs-vinet.json').read_text())
             if hashlib.sha256(path.read_bytes()).hexdigest()!=metadata['onnx_sha256']: raise ValueError('AI model je promenjen ili ostecen.')

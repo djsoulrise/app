@@ -15,7 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auto_audio, chorus, shortcuts, native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
+from . import history_context, event_exports, auto_audio, chorus, shortcuts, native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
 from .config import DATA, SETTINGS
 from .scan_control import ScanCancelled
 from .keys import key_score
@@ -418,7 +418,15 @@ def style_list():
 
 @app.get("/api/suggest")
 def get_suggest(track_id: int, mode: str | None = None, strict: str | None = None):
-    return suggest.suggest(track_id, mode, strict=strict)
+    result=suggest.suggest(track_id, mode, strict=strict)
+    audio=result.get('audio_diagnostics',{}).get('accepted_top',[])[:3]
+    result['history_context']=history_context.neighbors(track_id,{t['id'] for t in audio})
+    return result
+
+
+@app.get('/api/history-context')
+def get_history_context(track_id: int):
+    return history_context.neighbors(track_id)
 
 
 @app.get("/api/plays")
@@ -630,6 +638,25 @@ def create_event(body: dict = Body(...)):
                     (body["name"], body.get("date") or datetime.now().date().isoformat(), body.get("venue", ""))).lastrowid
     c.commit()
     return {"id": eid}
+
+
+@app.get('/api/events/{eid}/days')
+def event_days(eid: int):
+    try:return event_exports.days(eid)
+    except ValueError as exc:raise HTTPException(400,str(exc))
+
+
+@app.post('/api/events/{eid}/days/{day}/export')
+def export_event_day(eid: int, day: str, request: Request, body: dict = Body(...)):
+    _shortcut_local(request)
+    try:
+        event_exports.day_value(day);event_exports.event(eid)
+        kind=body.get('kind','m3u')
+        if kind not in ('m3u','songs'):raise ValueError('Nepoznata vrsta izvoza.')
+        if kind=='songs':
+            return start_job('Izvoz pesama za '+day,lambda:event_exports.export(eid,day,True,_progress,JOB_STOP),kind='day_export',cancellable=True)
+        return event_exports.export(eid,day)
+    except (ValueError,OSError) as exc:raise HTTPException(400,str(exc))
 
 
 @app.post("/api/events/{eid}/activate")

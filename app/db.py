@@ -24,6 +24,8 @@ CREATE INDEX IF NOT EXISTS ix_tt_tag ON track_tags(tag);
 CREATE TABLE IF NOT EXISTS src_playlists(id INTEGER PRIMARY KEY, name TEXT UNIQUE, source TEXT, use_learn INTEGER DEFAULT 1, n INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS src_entries(playlist_id INTEGER, pos INTEGER, track_id INTEGER);
 CREATE INDEX IF NOT EXISTS ix_se_pl ON src_entries(playlist_id);
+CREATE INDEX IF NOT EXISTS ix_context_track ON src_entries(track_id,playlist_id,pos);
+CREATE INDEX IF NOT EXISTS ix_context_pos ON src_entries(playlist_id,pos);
 CREATE TABLE IF NOT EXISTS transitions(a INTEGER, b INTEGER, n REAL DEFAULT 0, n2 REAL DEFAULT 0, PRIMARY KEY(a, b));
 CREATE INDEX IF NOT EXISTS ix_tr_b ON transitions(b);
 CREATE TABLE IF NOT EXISTS notes(a INTEGER, b INTEGER, note TEXT, PRIMARY KEY(a, b));
