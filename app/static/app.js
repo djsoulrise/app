@@ -2,6 +2,7 @@
 const $ = (s, e = document) => e.querySelector(s);
 const $$ = (s, e = document) => [...e.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+if (localStorage.getItem('consoleRevision') !== 'audio6') { localStorage.setItem('view','full'); localStorage.setItem('consoleRevision','audio6'); }
 const state = {page: 'sada', curId: null, timer: null, lib: {q: '', view: '', tag: '', sort: 'artist', dir: 'asc', page: 1, size: 100}, sel: new Set(), mode: 'ravno', strict: 'normalno', styleLabels: {},
   view: /[?&]tiker=1/.test(location.search) ? 'tiker' : /[?&]mini=1/.test(location.search) ? 'mini'
     : (localStorage.getItem('view') || (localStorage.getItem('mini') === '1' ? 'mini' : 'full')),
@@ -39,18 +40,28 @@ function badges(t) {
     ...(t.tags || []).filter(x => !x.junk).slice(0, 6).map(x => `<span class="badge">${esc(x.t)}</span>`)].join('');
 }
 
+function performanceBadges(t) {
+  return [t.bpm ? `<span class="badge">${t.bpm.toFixed(1)} <small>BPM</small></span>` : '',
+    t.camelot ? `<span class="badge blue">${esc(t.camelot)}</span>` : '',
+    t.energy ? `<span class="badge">E${t.energy}${t.energy_src === 'procena' ? '~' : ''}</span>` : '',
+    t.flex_grid ? '<span class="badge bad">FLEX</span>' : ''].join('');
+}
+
 // ---------- navigation ----------
 const PAGES = [['sada', 'Sada'], ['lib', 'Biblioteka'], ['tags', 'Tagovi'], ['dupes', 'Duplikati'], ['audio', 'Audio ritam'], ['grids', 'Fleksibilni gridovi'], ['pl', 'Plejliste'],
   ['eve', 'Vece'], ['req', 'Zahtevi'], ['ai', 'AI'], ['trend', 'Trendovi'], ['shortcuts', 'Precice'], ['set', 'Podesavanja']];
 function go(p) {
   if (state.keyLearn || (state.page === 'shortcuts' && p !== 'shortcuts')) cancelShortcutLearn();
   if (state.mini) p = 'sada';
+  document.body.classList.remove('nav-open');
+  $('#settingsbtn')?.setAttribute('aria-expanded','false');
+  document.body.classList.toggle('performance', p === 'sada' && !state.mini);
   document.body.classList.toggle('mini', state.mini);
   document.body.classList.toggle('tiker', state.tiker);
   $('#minibtn').textContent = {full: 'Mini', mini: 'Tiker', tiker: 'Pun prikaz'}[state.view];
   clearInterval(state.rot);
   state.page = p; clearInterval(state.timer); state.timer = null;
-  $('#nav').innerHTML = PAGES.map(([k, v]) => `<button data-act="go" data-p="${k}" class="${k === p ? 'on' : ''}">${v}</button>`).join('');
+  $('#nav').innerHTML = '<div class="menu-caption">CONSOLE / OPCIJE</div>' + PAGES.map(([k, v]) => `<button data-act="go" data-p="${k}" class="${k === p ? 'on' : ''}">${v}</button>`).join('') + '<button data-act="mini">Mini / Tiker prikaz</button>';
   $('#main').innerHTML = '<p class="mut">Ucitavam...</p>';
   return guard(pages[p])();
 }
@@ -96,11 +107,12 @@ pages.sada = async () => {
   }
   $('#main').innerHTML = `
     <div id="cur"></div>
-    <div class="row"><input id="q" placeholder="Rucni izbor trenutne pesme (naziv ili izvodjac)..." style="flex:1;min-width:240px">
+    <div class="row search-strip"><input id="q" placeholder="Pronadji pesmu / izvodjaca..." style="flex:1;min-width:210px">
       <span id="modes"></span></div>
-    <div id="res"></div><div id="sug"></div>
-    <div class="evening-layout"><section><h3>Veceras pusteno</h3><div id="played"></div></section>
-    <section><h3>LIVE · 10 audio najslicnijih</h3><div id="liveaudio" class="card mut">Cekam trenutnu pesmu...</div></section></div>`;
+    <div id="res"></div>
+    <div class="console-layout"><section class="suggestions-panel"><div class="panel-heading"><h3>Sledecih <b>5</b></h3><span>SELEKCIJA / MIX</span></div><div id="sug"></div></section>
+    <aside class="live-panel"><div class="panel-heading"><h3><i class="live-dot"></i> LIVE <b>10</b></h3><span>AUDIO RITAM</span></div><div id="liveaudio">Cekam trenutnu pesmu...</div></aside></div>
+    <div class="console-footer"><button data-act="consolehistory">Veceras pusteno <span class="mut">/ istorija</span></button><button data-act="consoledetails">Detalji preporuka <span class="mut">/ audio uslovi</span></button></div><div id="played" class="hidden"></div><div id="suggestionDiagnostics" class="hidden"></div>`;
   drawModes(); state._drawModes = drawModes;
   $('#q').addEventListener('input', guard(async e => {
     const q = e.target.value.trim();
@@ -189,21 +201,21 @@ async function loadSuggest(n) {
   if (d.audio_status) notes.push(esc(d.audio_status) + ' Zadrzan je izvorni predlog.');
   if (d.blocked_history && d.blocked_history.length) notes.push('Iz tvojih lista preskoceno zbog stila: ' + d.blocked_history.map(esc).join('; '));
   if (d.relaxed && d.relaxed.length) notes.push('Premalo pesama u istom stilu, opusten filter: ' + d.relaxed.join(', '));
-  $('#cur').innerHTML = `<div class="card cur"><div class="mut small">TRENUTNA (${esc(src || '')}) &middot; stil: ${esc(c.style_label)}</div>
-    <div class="big">${name(c)}</div>${badges(c)}</div>`;
-  $('#sug').innerHTML = audioDiagnosticHtml(d.audio_diagnostics) + (notes.length ? `<div class="small mut">${notes.join('<br>')}</div>` : '') + '<h3>Sledecih 5</h3><div class="grid">' + d.items.map(t => `
-    <div class="card" data-shortcut-id="${t.id}">
-      <button class="sm" data-act="shortcutselect" data-id="${t.id}">Izaberi za precice</button>
-      <div><span class="badge ${t.label === 'siguran izbor' ? 'ok' : 'acc'}">${t.label}</span><b style="float:right">${t.score}</b></div>
-      <div class="big" style="font-size:20px">${name(t)}</div>${badges(t)}
-      <div class="bar"><i style="width:${Math.min(100, t.score)}%"></i></div>
-      <ul class="why">${t.why.map(w => `<li>${esc(w)}</li>`).join('')}</ul>
-      ${t.note ? `<div class="small" style="color:var(--acc)">Beleska: ${esc(t.note)}</div>` : ''}
-      <div class="row"><button class="sm pri" data-act="use" data-id="${t.id}">Pusteno / trenutna</button>
+  $('#cur').innerHTML = `<div class="card cur"><div class="now-indicator">NOW<span>AKTIVNA PESMA</span></div><div class="current-body"><div class="current-title" title="${esc((c.artist ? c.artist+' - ' : '')+c.title)}">${name(c)}</div><div class="current-meta">${performanceBadges(c)} <span class="mut">${esc(c.style_label || '')} · ${esc(src || '')}</span></div></div></div>`;
+  if ($('#suggestionDiagnostics')) $('#suggestionDiagnostics').innerHTML = audioDiagnosticHtml(d.audio_diagnostics) + (notes.length ? `<div class="small mut">${notes.join('<br>')}</div>` : '');
+  $('#sug').innerHTML = d.items.length ? '<div class="recommendation-list">' + d.items.map((t,i) => `
+    <article class="card recommendation" data-shortcut-id="${t.id}">
+      <span class="rec-number">${String(i+1).padStart(2,'0')}</span>
+      <div class="rec-body"><div class="rec-title" title="${esc((t.artist ? t.artist+' - ' : '')+t.title)}">${name(t)}</div>
+      <div class="rec-meta">${performanceBadges(t)} <span class="rec-label">${esc(t.audio_match ? 'AUDIO RITAM' : t.label)}</span></div>
+      <div class="rec-actions"><button class="sm" data-act="shortcutselect" data-id="${t.id}" title="Izaberi predlog za precice">Izaberi</button>
+      <button class="sm pri" data-act="use" data-id="${t.id}" title="Oznaci kao pusteno / trenutno">Pusteno</button>
       <button class="sm" data-act="copysong" data-id="${t.id}">Copy Song</button>
-      <button class="sm" data-act="dragsong" data-id="${t.id}">Prevuci u Traktor</button>
-      <button class="sm" data-act="reveal" data-id="${t.id}">Explorer</button></div></div>`).join('') + '</div>' +
-    (d.items.length ? '' : '<p class="mut">Nema predloga. Ucitaj biblioteku u Podesavanjima.</p>');
+      <button class="sm" data-act="dragsong" data-id="${t.id}">Prevuci</button>
+      <button class="sm" data-act="reveal" data-id="${t.id}">Explorer</button>
+      <button class="sm" data-act="suggestioninfo" data-id="${t.id}" title="Razlozi, tagovi i detalji preporuke">Detalji</button></div></div>
+      <span class="rec-score" title="Ocena preporuke">${esc(t.score)}</span>
+    </article>`).join('') + '</div>' : '<div class="empty-state">Nema predloga.<br><span class="mut">Ucitaj biblioteku ili izaberi trenutnu pesmu.</span></div>';
   highlightShortcut();
 }
 
@@ -436,6 +448,7 @@ async function saveSettings() {
 // ---------- actions ----------
 const sendRating = async (id, r) => { await api(`/api/plays/${id}/rate`, {rating: r}); };
 const actions = {
+  navmenu: () => { const open=document.body.classList.toggle('nav-open'); $('#settingsbtn').setAttribute('aria-expanded',String(open)); },
   go: el => go(el.dataset.p),
   mini: () => {
     state.view = {full: 'mini', mini: 'tiker', tiker: 'full'}[state.view];
@@ -688,12 +701,11 @@ function renderLiveAudio(data) {
   const element = $('#liveaudio');
   if (!element) return;
   const report = data.audio_diagnostics || {}, items = report.accepted_top || [];
-  element.className = 'card';
-  element.innerHTML = `<p class="small mut">${data.current ? name(data.current) : ''}<br>Prag: ${report.threshold ? (report.threshold*100).toFixed(0)+'%' : '?'} · isti uslovi kao peti AUDIO RITAM predlog</p>` +
-    (items.length ? items.map((t,i) => `<div class="live-audio-item"><div><b>${i+1}. ${name(t)}</b> <span class="badge acc">${t.score.toFixed(1)}%</span></div>
-      <div class="small mut">Audio BPM ${t.audio.bpm} · razlika tempa ${t.tempo_delta.toFixed(1)}%</div>
-      <div class="row"><button class="sm" data-act="copysong" data-id="${t.id}">Copy Song</button><button class="sm" data-act="dragsong" data-id="${t.id}">Prevuci</button><button class="sm" data-act="reveal" data-id="${t.id}">Explorer</button></div></div>`).join('') : `<p class="mut">${esc(data.audio_status || 'Nema rezultata koji prolaze audio uslove.')}</p>`) +
-    (items.length && items.length<10 ? `<p class="small mut">Prolazi ${items.length} pesama; lista se ne dopunjava nasumicno.</p>` : '');
+  element.className = 'live-content';
+  element.innerHTML = `<div class="live-context"><span>Prag <b>${report.threshold ? (report.threshold*100).toFixed(0)+'%' : '?'}</b></span><span>isti uslovi kao 5. predlog</span><p class="sr-only">${data.current ? name(data.current) : ''}</p></div>` +
+    (items.length ? '<div class="live-list">'+items.map((t,i) => `<div class="live-audio-item"><span class="live-number">${String(i+1).padStart(2,'0')}</span><div class="live-item-body"><div class="live-title" title="${esc((t.artist ? t.artist+' - ' : '')+t.title)}">${name(t)}</div>
+      <div class="live-secondary"><span>${t.audio.bpm} BPM · Δ ${t.tempo_delta.toFixed(1)}%</span><div class="live-actions"><button data-act="copysong" data-id="${t.id}" title="Copy Song">Copy</button><button data-act="dragsong" data-id="${t.id}">Prevuci</button><button data-act="reveal" data-id="${t.id}" title="Prikazi u Exploreru">Fajl</button></div></div></div><span class="live-score">${t.score.toFixed(1)}<small>%</small></span></div>`).join('')+'</div>' : `<div class="empty-state"><span class="mut">${esc(data.audio_status || 'Nema rezultata koji prolaze audio uslove.')}</span></div>`) +
+    (items.length && items.length<10 ? `<p class="live-note">Prolazi ${items.length} pesama; bez nasumicne dopune.</p>` : '');
 }
 
 document.addEventListener('input', e => {
@@ -730,7 +742,7 @@ function shortcutStatusText(d) {
 pages.shortcuts = async () => {
   const d = await api('/api/shortcuts');
   $('#main').innerHTML = `<h2>Precice — tastatura i kontroler</h2>
-  <p>Svaka radnja ima odvojeno ucenje. Tastatura radi dok je aktivan Traktor ili Assistant, osim pri kucanju u Assistantu. Postavke se cuvaju automatski.</p>
+  <p>Svaka radnja ima odvojeno ucenje. Prikaz/minimizacija radi globalno, pa Ctrl+X vraca i minimizovan prozor. Ostale tastaturne precice rade u Traktoru i Assistantu. Pri kucanju u Assistantu precice miruju. Postavke se cuvaju automatski.</p>
   <div class="card"><label><input type="checkbox" id="keyboardEnabled" ${d.settings.keyboard_enabled ? 'checked' : ''}> Tastaturne precice ukljucene</label>
   <div class="row"><select id="midiPort"><option value="">Izaberi MIDI ulaz</option></select>
   <button data-act="shortcutports">Osvezi MIDI ulaze</button><button data-act="shortcutconnect">Povezi MIDI</button><button data-act="shortcutdisconnect">Iskljuci MIDI</button></div>
@@ -846,3 +858,26 @@ async function runShortcut(action) {
     },250);
   } catch {} // Guest/tablet clients cannot use native shortcuts.
 })();
+
+actions.suggestioninfo = el => {
+  const t = (state.shortcutItems || []).find(t => t.id===+el.dataset.id);
+  if (!t) return;
+  $('#modalbox').innerHTML = `<h3>${name(t)}</h3>${badges(t)}<p class="mut">${esc(t.label)} · ocena ${esc(t.score)}</p><ul class="why">${(t.why || []).map(w=>`<li>${esc(w)}</li>`).join('')}</ul>${t.note ? `<p>${esc(t.note)}</p>` : ''}<div class="row"><button data-act="closemodal">Zatvori</button></div>`;
+  $('#modal').classList.remove('hidden');
+};
+
+document.addEventListener('click', e => {
+  if (document.body.classList.contains('nav-open') && !e.target.closest('#nav,#settingsbtn')) {
+    document.body.classList.remove('nav-open'); $('#settingsbtn')?.setAttribute('aria-expanded','false');
+  }
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape' && !state.keyLearn) { document.body.classList.remove('nav-open'); $('#settingsbtn')?.setAttribute('aria-expanded','false'); }
+});
+
+function consoleModal(title, selector) {
+  $('#modalbox').innerHTML = `<h3>${esc(title)}</h3>${$(selector)?.innerHTML || '<p class="mut">Nema podataka.</p>'}<div class="row"><button data-act="closemodal">Zatvori</button></div>`;
+  $('#modal').classList.remove('hidden');
+}
+actions.consolehistory = () => consoleModal('Veceras pusteno','#played');
+actions.consoledetails = () => consoleModal('Detalji preporuka','#suggestionDiagnostics');

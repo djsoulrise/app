@@ -29,6 +29,13 @@ def button_message(message):
     return None, False
 
 
+def active_keyboard_bindings(bindings, in_scope, editing_own):
+    """The window toggle must remain reachable after minimizing or switching apps."""
+    if editing_own: return {}
+    return {action: binding for action, binding in bindings.items()
+            if action == 'toggle_window' or in_scope}
+
+
 class MidiButtons:
     def __init__(self):
         self.pressed = set()
@@ -228,7 +235,9 @@ class Manager:
                         enabled = False
                     else:
                         self.wait_keyboard_release = False
-                active=enabled and self.window.keyboard_scope(editing)
+                bindings = active_keyboard_bindings(bindings, self.window.keyboard_scope(editing),
+                                                    self.window.own_editing(editing)) if enabled else {}
+                active = bool(bindings)
                 desired=repr(bindings) if active else ''
                 if desired!=current:
                     for ident in registered: user.UnregisterHotKey(None,ident)
@@ -239,8 +248,10 @@ class Manager:
                             else: self.keyboard_error='Precica je zauzeta ili rezervisana: '+binding['label']
                     current=desired
                 while user.PeekMessageW(ctypes.byref(msg),None,0,0,1):
-                    if msg.message==0x0312 and msg.wParam in registered and self.window.keyboard_scope(self.editing):
-                        self.fire(registered[msg.wParam])
+                    if msg.message==0x0312 and msg.wParam in registered:
+                        action = registered[msg.wParam]
+                        if not self.window.own_editing(self.editing) and (action=='toggle_window' or self.window.keyboard_scope(self.editing)):
+                            self.fire(action)
         finally:
             for ident in registered: user.UnregisterHotKey(None,ident)
 
@@ -266,6 +277,9 @@ class WindowsWindow:
         self.kernel.CloseHandle.argtypes=[wintypes.HANDLE]
 
     def own(self): return self.user.FindWindowW(None,self.title)
+
+    def own_editing(self,editing):
+        return bool(editing and self.own() and self.user.GetForegroundWindow()==self.own())
 
     def keyboard_scope(self,editing):
         foreground=self.user.GetForegroundWindow();own=self.own()

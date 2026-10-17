@@ -27,6 +27,25 @@ class ShortcutsTests(unittest.TestCase):
     def test_reserved_keys_rejected(self):
         for vk in (0,16,17,18,91,92,123,255):
             with self.assertRaises(ValueError): self.m.bind_keyboard('focus_search',{'vk':vk,'modifiers':2})
+    def test_toggle_stays_registered_when_focus_moves_outside_traktor(self):
+        bindings={'toggle_window':{'vk':88,'modifiers':2},'copy_song':{'vk':67,'modifiers':3}}
+        # This is the state after minimizing into an unrecognized/fullscreen foreground app.
+        self.assertEqual(set(sc.active_keyboard_bindings(bindings,False,False)),{'toggle_window'})
+        self.assertEqual(set(sc.active_keyboard_bindings(bindings,True,False)),set(bindings))
+        self.assertEqual(sc.active_keyboard_bindings(bindings,True,True),{})
+    def test_window_toggle_restores_minimized_native_window(self):
+        # Exercise both Win32 command paths without interacting with real Traktor.
+        w=sc.WindowsWindow.__new__(sc.WindowsWindow)
+        state={'foreground':100,'iconic':False};calls=[]
+        w.own=lambda:100;w.previous=200
+        def show(hwnd,command):
+            calls.append(command);state['iconic']=command==6
+            if command==6: state['foreground']=200
+        def foreground(hwnd): state['foreground']=hwnd;return 1
+        w.user=Msg(GetForegroundWindow=lambda:state['foreground'],IsIconic=lambda h:state['iconic'],ShowWindow=show,SetForegroundWindow=foreground,IsWindow=lambda h:True)
+        w.toggle();self.assertTrue(state['iconic'])
+        w.toggle();self.assertFalse(state['iconic']);self.assertEqual(state['foreground'],100)
+        self.assertEqual(calls,[6,9])
     def test_combo_requires_hold_and_edge(self):
         bindings={'toggle_window':{'modifier':['cc',15,110],'button':['cc',15,111]}}
         b=sc.MidiButtons();self.assertEqual(b.update(cc(111),bindings)[0],[])

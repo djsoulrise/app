@@ -1,3 +1,13 @@
+AUDIO 6 — KOMPAKTNA KONZOLA
+
+Ctrl+X: globalno prikazi / minimizuj, ostaje dostupan i kada Traktor nije prepoznat.
+Pri kucanju u poljima Assistanta precice miruju (Ctrl+X tada ostaje isecanje teksta).
+Ostale tastaturne precice i dalje rade u Assistantu i Traktoru.
+Pet predloga levo, LIVE deset audio rezultata desno, jednake visine.
+Opcije su pod zupcanikom, istorija i detalji se otvaraju na klik.
+Pocetni prozor 1100 x 780; minimalno 940 x 650.
+Postojeci sken i algoritam preporuka nisu promenjeni.
+
 AUDIO 5 — PRECICE
 
 Nova kartica Precice: posebno Nauci tastaturu / Nauci kontroler za svaku radnju.

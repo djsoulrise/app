@@ -62,9 +62,9 @@ def main() -> None:
     if not _wait_port(port):
         print(f"Server nije pokrenut (port {port} je mozda zauzet).")
         sys.exit(1)
-    title = "DJ asistent — Audio 5"
+    title = "DJ asistent — Audio 6"
     from app.shortcuts import manager, WindowsWindow
-    webview.create_window(title, f"http://127.0.0.1:{port}", width=1400, height=900, min_size=(900, 600))
+    webview.create_window(title, f"http://127.0.0.1:{port}", width=1100, height=780, min_size=(940, 650))
     try:
         webview.start(lambda: manager.start(WindowsWindow(title)))
     finally:
