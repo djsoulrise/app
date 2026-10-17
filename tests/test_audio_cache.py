@@ -39,6 +39,10 @@ class AudioCacheTests(unittest.TestCase):
                     self.assertEqual(audio_rhythm.scan()['cached'], 3)
                 current = {'id': 1, 'path': paths[0]}
                 candidates = [{'id': i, 'path': paths[i-1]} for i in (2,3)]
+                def prepare():
+                    measured,report=audio_rhythm.rank_audio(current,candidates)
+                    audio_rhythm.PREPARED={'track_id':1,'revision':audio_rhythm.SCAN_REVISION,'whole':(measured,report),'source_stamp':(os.stat(paths[0]).st_size,os.stat(paths[0]).st_mtime_ns)}
+                prepare()
                 selected, reason = audio_rhythm.fifth(current,candidates,set())
                 self.assertEqual(selected['id'], 2)
                 self.assertIsNone(reason)
@@ -60,6 +64,7 @@ class AudioCacheTests(unittest.TestCase):
                     score = audio_rhythm.similarity(source,feature)
                     self.assertGreater(score, .51); self.assertLess(score, .99)
                     SETTINGS['audio_similarity_threshold'] = score+.005
+                    prepare()
                     diagnostic = {}
                     selected, _ = audio_rhythm.fifth(current,[candidates[0]],set(),diagnostic)
                     self.assertIsNone(selected)

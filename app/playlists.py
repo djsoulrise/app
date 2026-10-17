@@ -70,10 +70,10 @@ def export_m3u(name: str, tracks: list[dict]) -> str:
     if not folder:
         raise ValueError("Folder za izvoz nije podesen.")
     os.makedirs(folder, exist_ok=True)
-    fn = re.sub(r'[\\/:*?"<>|]', "_", name).strip() or "plejlista"
+    fn = re.sub(r'[\\/:*?"<>|]', "_", name).strip(" .") or "plejlista"
     path = os.path.join(folder, fn + ".m3u8")
     with open(path, "w", encoding="utf-8") as f:
         f.write("#EXTM3U\n")
         for t in tracks:
-            f.write(f"#EXTINF:{int(t['duration'] or 0)},{t['artist']} - {t['title']}\n{t['path']}\n")
+            f.write(f"#EXTINF:{int(t.get('duration') or 0)},{t['artist']} - {t['title']}\n{t['path']}\n")
     return path

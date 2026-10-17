@@ -15,3 +15,5 @@ python-rtmidi
 
 librosa==1.0.0
 onnxruntime==1.31.0
+
+threadpoolctl>=3.1,<4

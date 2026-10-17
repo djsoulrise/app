@@ -1,4 +1,11 @@
 """Desktop launcher: runs the server in-process and shows the UI in a native window (WebView2)."""
+import os
+for _thread_key in ("OMP_NUM_THREADS","OPENBLAS_NUM_THREADS","MKL_NUM_THREADS","NUMBA_NUM_THREADS"):
+    os.environ[_thread_key]="1"
+import multiprocessing
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
+
 import socket
 import sys
 import threading
@@ -50,6 +57,14 @@ def main() -> None:
         import numpy as np
         from scipy.signal import find_peaks
         db.init()
+        from concurrent.futures import ProcessPoolExecutor
+        from app import performance
+        ctx=multiprocessing.get_context('spawn')
+        with ProcessPoolExecutor(2,mp_context=ctx,initializer=performance.initialize_worker,initargs=(ctx.Event(),str(db.DB_FILE))) as pool:
+            probes=[pool.submit(performance.worker_probe) for _ in range(2)]
+            for future in probes:
+                result=future.result(timeout=45)
+                assert result['pid']!=os.getpid() and result['threads']=='1' and result['worker']=='1'
         decoder = audio_rhythm.decoder()
         assert Path(decoder).is_file(), 'FFmpeg is missing from the EXE'
         assert find_peaks(np.array([0., 1., 0.]))[0].size == 1
@@ -74,8 +89,23 @@ def main() -> None:
         from app import loop_audio
         periodic=loop_audio.extract(signal)
         assert periodic and loop_audio.compare(periodic,periodic)['score']>99
+        import tempfile,wave
+        from app import auto_audio
+        with tempfile.TemporaryDirectory() as tmp:
+            audio=Path(tmp)/'worker.wav'
+            with wave.open(str(audio),'wb') as wav:
+                wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(sr)
+                wav.writeframes((signal*30000).astype('<i2').tobytes())
+            payload=({'id':1,'path':str(audio)},'[]',True)
+            with ProcessPoolExecutor(2,mp_context=ctx,initializer=performance.initialize_worker,initargs=(ctx.Event(),str(db.DB_FILE))) as pool:
+                jobs=[pool.submit(auto_audio.calculate,payload) for _ in range(2)]
+                for job in jobs:
+                    calculated=job.result(timeout=90)
+                    assert calculated['data'][0]['features'].get('neural')
+                    assert calculated['data'][0]['song_phrase']['sample']['data']
+                    assert calculated['model']==learned_audio.MODEL_ID
         report = sys.argv[sys.argv.index('--build-self-test') + 1]
-        Path(report).write_text(json.dumps({'ok': True, 'native_file_drop': True, 'shortcuts_backend': True, 'learned_model': True, 'phrase_features': True, 'periodic_features': True, 'frozen': bool(getattr(sys, 'frozen', False)),
+        Path(report).write_text(json.dumps({'ok': True, 'parallel_audio': True, 'native_file_drop': True, 'shortcuts_backend': True, 'learned_model': True, 'phrase_features': True, 'periodic_features': True, 'frozen': bool(getattr(sys, 'frozen', False)),
                                            'decoder_in_bundle': str(Path(decoder).resolve()).startswith(str(Path(sys._MEIPASS).resolve()))}), encoding='utf-8')
         return
     port = int(SETTINGS["port"])

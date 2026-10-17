@@ -91,6 +91,8 @@ function go(p) {
   document.body.classList.toggle('tiker', state.tiker);
   $('#minibtn').textContent = {full: 'Mini', mini: 'Tiker', tiker: 'Pun prikaz'}[state.view];
   clearInterval(state.rot);
+  if(state.page==='sada' && p!=='sada')state.consoleSnapshot={html:$('#main').innerHTML,view:state.view};
+  state.suggestEpoch=(state.suggestEpoch||0)+1;
   state.page = p; clearInterval(state.timer); state.timer = null;
   $('#nav').innerHTML = '<div class="menu-caption">CONSOLE / OPCIJE</div>' + PAGES.map(([k, v]) => `<button data-act="go" data-p="${k}" class="${k === p ? 'on' : ''}">${v}</button>`).join('') + '<button data-act="mini">Mini / Tiker prikaz</button>';
   $('#main').innerHTML = '<p class="mut">Ucitavam...</p>';
@@ -101,10 +103,11 @@ async function refreshStatus() {
   try {
     const s = await api('/api/status');
     const j = s.job, b = s.broadcast;
-    $('#statusbar').innerHTML = `Pesama: ${s.counts.n || 0} (Traktor ${s.counts.trk || 0}, flex ${s.counts.flex || 0}) | ` +
+    $('#statusbar').innerHTML = `${s.gig_mode?'GIG MOD · ':''}Pesama: ${s.counts.n || 0} (Traktor ${s.counts.trk || 0}, flex ${s.counts.flex || 0}) | ` +
       `Broadcast: ${b.running ? (b.last_connect ? 'povezan' : 'ceka') : 'ugasen'} | ` +
       (j.running ? `<b>${esc(j.phase)} ${j.done}/${j.total}</b>` : j.error ? `<span style="color:var(--bad)">${esc(j.error)}</span>` : '');
     state.status = s;
+    if($('#gigLabel'))$('#gigLabel').textContent=s.gig_mode?'ON':'OFF';
     if(state.dayExportPending && j.kind==='day_export' && !j.running && state.page==='eve'){
       state.dayExportPending=false;
       $('#dayExportResult').textContent=j.error?'Izvoz nije zavrsen: '+j.error:'Izvoz: '+(j.result?.path||'')+' · Kopirano '+(j.result?.copied||0)+' · Nedostaje '+(j.result?.missing?.length||0);
@@ -125,7 +128,12 @@ pages.sada = async () => {
     : [['ravno', 'Ravno'], ['podizanje', 'Podizanje energije'], ['spustanje', 'Spustanje']];
   const drawModes = () => $('#modes').innerHTML = modes.map(([k, v]) => `<button class="tab ${state.mode === k ? 'on' : ''}" data-act="mode" data-m="${k}">${v}</button>`).join('') +
     (state.mini ? ' ' : ' <span class="mut small">Stil:</span> ') + ['strogo', 'normalno', 'slobodno'].map(k => `<button class="tab ${state.strict === k ? 'on' : ''}" data-act="strict" data-m="${k}">${k}</button>`).join('');
-  state.curId = null; state.playedSig = '';
+  state.playedSig = '';
+  if(state.consoleSnapshot?.view===state.view){
+    $('#main').innerHTML=state.consoleSnapshot.html;if(!state.tiker){drawModes();state._drawModes=drawModes;}else{state.rot=setInterval(()=>{if(state.tikItems.length>1){state.tikIdx=(state.tikIdx+1)%state.tikItems.length;renderTik(true);}},4000);}
+    $('#q')?.addEventListener('input',guard(async e=>{const q=e.target.value.trim();if(q.length<2){$('#res').innerHTML='';return;}const items=await api('/api/search?q='+encodeURIComponent(q));if(state.page==='sada')$('#res').innerHTML=items.map(t=>`<div class="row"><button data-act="use" data-id="${t.id}">Trenutna</button>${name(t)}</div>`).join('');}));
+    tickNow(true);state.timer=setInterval(()=>tickNow(false),2000);return;
+  }
   if (state.tiker) {
     $('#main').innerHTML = '<div id="cur"></div><div id="sug"></div>';
     await tickNow(true);
@@ -147,7 +155,7 @@ pages.sada = async () => {
     <div id="res"></div>
     <div class="console-layout"><section class="suggestions-panel"><div class="panel-heading"><h3>Sledecih <b>5</b></h3><span>SELEKCIJA / MIX</span></div><div id="sug"></div></section>
     <aside class="live-panel"><div class="panel-heading"><h3><i class="live-dot"></i> LIVE <b>3 + 6</b></h3><span>AUDIO / ISTORIJA</span></div><div id="liveaudio">Cekam trenutnu pesmu...</div></aside></div>
-    <div class="console-footer"><button data-act="consolehistory">Veceras pusteno <span class="mut">/ istorija</span></button><button data-act="consoledetails">Detalji preporuka <span class="mut">/ audio uslovi</span></button></div><div id="played" class="hidden"></div><div id="suggestionDiagnostics" class="hidden"></div>`;
+    <div class="console-footer"><button data-act="togglegig">Gig mod <b id="gigLabel">${state.status?.gig_mode?'ON':'OFF'}</b></button><button data-act="consolehistory">Veceras pusteno <span class="mut">/ istorija</span></button><button data-act="consoledetails">Detalji preporuka <span class="mut">/ audio uslovi</span></button></div><div id="played" class="hidden"></div><div id="suggestionDiagnostics" class="hidden"></div>`;
   drawModes(); state._drawModes = drawModes;
   $('#q').addEventListener('input', guard(async e => {
     const q = e.target.value.trim();
@@ -161,14 +169,15 @@ pages.sada = async () => {
 };
 
 async function tickNow(first) {
-  if (state.tickBusy) return;
+  if (state.tickBusy){state.tickPending=state.tickPending||first;return;}
   state.tickBusy = true;
   try { await tickNowInner(first); }
-  finally { state.tickBusy = false; }
+  finally { state.tickBusy = false; if(state.tickPending && state.page==='sada'){state.tickPending=false;queueMicrotask(()=>tickNow(true));} }
 }
 
 async function tickNowInner(first) {
   const n = await api('/api/now');
+  if(state.page!=='sada')return;
   const audioChanged = state.status && (state.lastAudioRevision !== state.status.audio_revision || state.lastAudioThreshold !== state.status.audio_threshold);
   if (n.track_id && (first || n.track_id !== state.curId || audioChanged)) {
     state.curId = n.track_id; $('#res') && ($('#res').innerHTML = '');
@@ -206,10 +215,11 @@ function renderTik(animate) {
 }
 
 async function loadSuggest(n) {
-  const requestedId = state.curId;
+  const requestedId = state.curId, requestedMode=state.mode, requestedStrict=state.strict;
+  const epoch=state.suggestEpoch=(state.suggestEpoch||0)+1;
   const revision = state.status?.audio_revision, threshold = state.status?.audio_threshold;
   const d = await api(`/api/suggest?track_id=${requestedId}&mode=${state.mode}&strict=${state.strict}`);
-  if (state.page !== 'sada' || state.curId !== requestedId) return;
+  if (state.page !== 'sada' || state.curId !== requestedId || epoch!==state.suggestEpoch || requestedMode!==state.mode || requestedStrict!==state.strict) return;
   state.lastAudioRevision = revision; state.lastAudioThreshold = threshold;
   renderLiveAudio(d);
   const signature = JSON.stringify([requestedId, d.items.map(t => t.id)]);
@@ -426,8 +436,9 @@ pages.trend = async () => {
 // --- Podesavanja ---
 pages.set = async () => {
   const s = await api('/api/settings'), st = await api('/api/status');
+  if(state.page!=='set')return;
   const w = s.weights, W = {hist: 'Moje liste (history)', key: 'Key harmonija', bpm: 'BPM', vibe: 'Vajb (tagovi/pozicija)', energy: 'Energija', year: 'Godina', genre: 'Zanr', feedback: 'Ocene (palo/nije)'};
-  $('#main').innerHTML = `<h2>Podesavanja</h2>
+  $('#main').innerHTML = `<h2>Podesavanja</h2><div class="card"><h3>Performanse / nastup</h3><label><input id="gigMode" type="checkbox" ${st.gig_mode?'checked':''}> Gig mod — pauziraj skeniranje i teska AI poredjenja</label><p class="small mut">Koristi zavrsene rezultate za trenutnu pesmu; inace izvorne preporuke. AI poredjenje radi odvojeno, na nizem prioritetu i sa jednom racunskom niti.</p><label>Paralelni sken: <select id="audioWorkers">${[1,2,3,4].map(n=>`<option value="${n}" ${n==st.audio_workers?'selected':''}>${n}</option>`).join('')}</select> radnika</label><button data-act="saveperformance">Sacuvaj performanse</button></div>
     <div class="card"><h3>Velicina teksta</h3><label><input type="checkbox" id="ctrlWheelText" ${ctrlWheelText ? 'checked' : ''}> Ctrl + tockic misa povecava / smanjuje tekst u celoj aplikaciji</label>
     <div class="row"><button data-act="fontsmaller">A−</button><input type="range" id="fontScaleRange" min="75" max="160" step="5" value="${fontScale}" aria-label="Velicina teksta"><b id="fontScaleValue">${fontScale}%</b><button data-act="fontlarger">A+</button><button data-act="fontreset">Pocetna velicina</button></div><p class="small mut">Ctrl + skrol gore: veci tekst. Ctrl + skrol dole: manji tekst. Promena se cuva odmah na ovom racunaru.</p></div>
     <div class="card"><h3>Biblioteka</h3>
@@ -992,3 +1003,7 @@ document.addEventListener('change',e=>{
   const result=await response.json();if(!response.ok)throw Error(result.detail||'Uvoz nije pokrenut.');toast('Uvoz / Relocate baze pokrenut');
  })();
 });
+
+actions.saveperformance=async()=>{const d=await api('/api/performance',{gig_mode:$('#gigMode').checked,audio_workers:+$('#audioWorkers').value});toast(d.gig_mode?'Gig mod ukljucen':'Gig mod iskljucen');};
+
+actions.togglegig=async()=>{const d=await api('/api/performance',{gig_mode:!state.status?.gig_mode});state.status={...state.status,...d};if($('#gigLabel'))$('#gigLabel').textContent=d.gig_mode?'ON':'OFF';toast(d.gig_mode?'Gig mod ukljucen — teski poslovi zaustavljeni':'Gig mod iskljucen');};

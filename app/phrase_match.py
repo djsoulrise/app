@@ -121,6 +121,16 @@ def align(a, b, stop_event=None):
             'a_start':float(round(i/HZ,2)),'b_start':float(round(j/HZ,2)),'shift':int(shift)}
 
 
+@lru_cache(maxsize=4)
+def query_fft(packed,width,n):
+    import numpy as np
+    from scipy.fft import fft2
+    aa=unpack(packed)
+    starts=sorted(set([*range(0,max(1,len(aa)-width+1),12*HZ),max(0,len(aa)-width)]))
+    windows=np.stack([aa[start:start+width] for start in starts])
+    return starts,fft2(windows,s=(n,12),axes=(-2,-1))
+
+
 def screen(a,b,stop_event=None):
     """Cheap local retrieval across the whole song, including outside cue hints."""
     import numpy as np
@@ -137,14 +147,16 @@ def screen(a,b,stop_event=None):
             target=bb[np.minimum((np.arange(max(1,round(len(bb)/scale)))*scale).astype(int),len(bb)-1)]
             n=next_fast_len(len(target)+width)
             target_fft=fft2(target,s=(n,12))
-            for start in starts:
-                part=aa[start:start+width]
-                length=len(part)
-                if len(target)<length:continue
-                corr=ifft2(np.conj(fft2(part,s=(n,12)))*target_fft).real[:len(target)-length+1]
-                j,shift=np.unravel_index(np.argmax(corr),corr.shape)
-                score=float(corr[j,shift])/max(1,length)
-                if score>best['score']:best={'score':score,'a_start':start/HZ,'b_start':j*scale/HZ,'scale':scale}
+            if len(target)<width:continue
+            offsets,query=query_fft(a[band],width,n)
+            # Four windows per batch bound scratch memory for long mixes.
+            for base in range(0,len(offsets),4):
+                check_stop(stop_event)
+                correlations=ifft2(np.conj(query[base:base+4])*target_fft,axes=(-2,-1)).real[:,:len(target)-width+1]
+                for start,corr in zip(offsets[base:base+4],correlations):
+                    j,shift=np.unravel_index(np.argmax(corr),corr.shape)
+                    score=float(corr[j,shift])/max(1,width)
+                    if score>best['score']:best={'score':score,'a_start':start/HZ,'b_start':j*scale/HZ,'scale':scale}
     return best
 
 

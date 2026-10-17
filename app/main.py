@@ -15,7 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import audio_cache_transfer, learning_import, history_context, event_exports, auto_audio, chorus, shortcuts, native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
+from . import performance, audio_cache_transfer, learning_import, history_context, event_exports, auto_audio, chorus, shortcuts, native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
 from .config import DATA, SETTINGS
 from .scan_control import ScanCancelled
 from .keys import key_score
@@ -47,6 +47,8 @@ def guest_url() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init()
+    from . import performance
+    performance.low_priority()
     if not db.one("SELECT 1 FROM events WHERE active=1"):
         db.conn().execute("INSERT INTO events(name, date, active) VALUES(?,?,1)",
                           (f"Vece {datetime.now():%d.%m.%Y}", datetime.now().date().isoformat()))
@@ -102,6 +104,9 @@ def _progress(done, total, msg):
 
 
 def start_job(name: str, fn, kind=None, cancellable=False) -> dict:
+    from . import performance
+    if performance.enabled() and kind in ('audio','chorus_library','grid_audio','grid_meta'):
+        raise HTTPException(409,'Gig mod je ukljucen; iskljuci ga pre skeniranja.')
     with JOB_LOCK:
         if JOB['running']:
             raise HTTPException(409, 'Posao je vec u toku.')
@@ -159,11 +164,10 @@ def refresh():
 def status():
     c = db.one("SELECT COUNT(*) n, SUM(on_disk) disk, SUM(in_traktor) trk, SUM(flex_grid) flex FROM tracks")
     cur = nowplaying.STATE
-    auto_audio.ensure(cur.get("track_id"))
-    return {"job": JOB, "counts": c, "now": cur, "broadcast": nowplaying.BROADCAST, "history": nowplaying.HISTORY,
+    return {"gig_mode":bool(SETTINGS.get("gig_mode",False)), "audio_workers":performance.workers(), "job": JOB, "counts": c, "now": cur, "broadcast": nowplaying.BROADCAST, "history": nowplaying.HISTORY,
             "ai": ai.available(), "fpcalc": duplicates._fpcalc() is not None, "guest_url": guest_url(),
             "event": db.one("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1"),
-            "audio_revision": f"{audio_rhythm.SCAN_REVISION}:{auto_audio.REVISION}:{auto_audio.STATE.get('phase')}:{auto_audio.STATE.get('error')}", "audio_threshold": json.dumps(auto_audio.settings(),sort_keys=True)}
+            "audio_revision": f"{audio_rhythm.SCAN_REVISION}:{auto_audio.REVISION}", "audio_threshold": json.dumps(auto_audio.settings(),sort_keys=True)}
 
 
 # ---------- settings ----------
@@ -390,7 +394,7 @@ def dupes_move(body: dict = Body(...)):
         raise HTTPException(400, "Potrebna je potvrda.")
     try:
         return duplicates.move_to_dupes(body.get("ids", []))
-    except ValueError as e:
+    except (ValueError, OSError) as e:
         raise HTTPException(400, str(e))
 
 
@@ -399,7 +403,6 @@ def dupes_move(body: dict = Body(...)):
 @app.get("/api/now")
 def now():
     cur = nowplaying.STATE
-    auto_audio.ensure(cur.get("track_id"))
     return {**cur, "track": library.get_track(cur["track_id"]) if cur["track_id"] else None}
 
 
@@ -599,7 +602,7 @@ def export_playlist(pid: int):
     pl = _get_playlist(pid)
     try:
         return {"path": playlists.export_m3u(pl["name"], playlists.playlist_tracks(pl))}
-    except ValueError as e:
+    except (ValueError, OSError) as e:
         raise HTTPException(400, str(e))
 
 
@@ -983,6 +986,8 @@ def audio_tracks(q: str = ''):
 
 @app.get("/api/audio/matches")
 def audio_matches(track_id: int, threshold: float | None = None):
+    from . import performance
+    if performance.enabled():raise HTTPException(409,'Gig mod: rucna audio poredjenja su pauzirana.')
     try:
         report = audio_rhythm.matches(track_id, cutoff=threshold)
         report['recommendation'] = suggest.suggest(track_id).get('audio_diagnostics', {})
@@ -1112,3 +1117,20 @@ def auto_audio_results():
     tid=nowplaying.STATE.get('track_id')
     if not tid: return {'items':[], 'audio_diagnostics':{}, 'audio_status':'Nema trenutne pesme u Traktoru.'}
     return suggest.suggest(tid)
+
+
+@app.post('/api/performance')
+def performance_settings(request: Request, body: dict = Body(...)):
+    if not _local(request):raise HTTPException(403,'Samo lokalni racunar.')
+    from . import performance
+    if 'gig_mode' in body:
+        if not isinstance(body['gig_mode'],bool):raise HTTPException(400,'Gig mod mora biti ukljucen ili iskljucen.')
+        SETTINGS['gig_mode']=body['gig_mode']
+        if body['gig_mode']:
+            auto_audio.STOP.set()
+            if JOB.get('kind') in ('audio','chorus_library','grid_audio','grid_meta'):JOB_STOP.set()
+    if 'audio_workers' in body:
+        try:SETTINGS['audio_workers']=max(1,min(4,int(body['audio_workers'])))
+        except (TypeError,ValueError):raise HTTPException(400,'Broj radnika mora biti 1–4.')
+    config.save(SETTINGS)
+    return {'gig_mode':performance.enabled(),'audio_workers':performance.workers()}

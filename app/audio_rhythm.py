@@ -374,8 +374,30 @@ def matches(track_id, cutoff=None, limit=50):
     return report
 
 
+PREPARED=None
+
+
 def fifth(current, candidates, excluded, diagnostics=None):
-    results, report = rank_audio(current, candidates, excluded)
+    # Pair measurements are computed in the isolated AI worker, never in the
+    # HTTP request that handles energy-mode changes or redraws the console.
+    from . import performance
+    saved=PREPARED
+    if not saved or saved['track_id']!=current['id'] or saved['revision']!=SCAN_REVISION:
+        if diagnostics is not None:diagnostics.update(current_error='Gig mod' if performance.enabled() else 'Audio poredjenje radi u pozadini',accepted_top=[],top=[])
+        return None,'Gig mod: audio poredjenje je pauzirano.' if performance.enabled() else 'Audio poredjenje se priprema u pozadini.'
+    try:stamp=os.stat(current['path']);source_stamp=(stamp.st_size,stamp.st_mtime_ns)
+    except (OSError,KeyError):source_stamp=None
+    original=saved.get('source_stamp')
+    if original is not None and original!=source_stamp:
+        if diagnostics is not None:diagnostics.update(current_error='Pesma je promenjena; ponovi skeniranje.',accepted_top=[],top=[])
+        return None,'Pesma je promenjena; ponovi skeniranje.'
+    allowed={t['id'] for t in candidates}-set(excluded)
+    results=[r for r in saved['whole'][0] if r['track']['id'] in allowed]
+    cutoff=threshold()
+    results=[dict(r,reasons=[x for x in r['reasons'] if x!='ispod podesenog praga']+(['ispod podesenog praga'] if r['score']<cutoff else [])) for r in results]
+    for r in results:r['accepted']=not r['reasons']
+    report=dict(saved['whole'][1],pool=len(candidates),threshold=cutoff,compared=len(results),
+                top=[public_match(r) for r in results[:5]],accepted_top=unique_accepted(results,10))
     if diagnostics is not None:
         diagnostics.update(report)
     if report['current_error']:

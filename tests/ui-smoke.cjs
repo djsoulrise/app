@@ -4,6 +4,7 @@ const {chromium}=require('playwright');
 (async()=>{
  const browser=await chromium.launch(process.platform==='win32'?{channel:'msedge',headless:true}:{headless:true});
  const page=await browser.newPage({viewport:{width:1100,height:680}});
+ let performanceBody=null,gig=false,workers=4,race=false;
  let learningPayloads=[],cacheCalls=[],cacheLast={};
  let current=1,saved=.97,job={running:false},starts=[],stops=[],dayExports=[],activations=[];
  let shortcuts={actions:{toggle_window:'Prikazi / minimizuj Assistant',focus_search:'Fokus na pretragu',next_suggestion:'Sledeci predlog',copy_song:'Copy Song'},settings:{keyboard_enabled:true,keyboard:{toggle_window:{vk:88,modifiers:2,label:'Ctrl+X'}},midi:{}},sequence:0,connected:false};
@@ -40,11 +41,12 @@ const {chromium}=require('playwright');
   else if(u.pathname==='/api/plays'&&u.searchParams.has('event_id'))body=[{id:1,track_id:1,ts:'2026-10-16T23:59:00',artist:'A',title:'Prva'},{id:2,track_id:2,ts:'2026-10-17T00:01:00',artist:'B',title:'Druga'},{id:3,track_id:1,ts:'2026-10-17T01:00:00',artist:'A',title:'Prva'}];
   else if(/^\/api\/events\/\d+\/days\/.+\/export$/.test(u.pathname)){const value=JSON.parse(route.request().postData());dayExports.push({path:u.pathname,...value});body={path:'C:\\Export',playlist:'C:\\Export\\list.m3u8',missing:[]};}
   else if(u.pathname.endsWith('/activate')){activations.push(u.pathname);body={ok:true};}
-  else if(u.pathname==='/api/status')body={counts:{n:3804},job,broadcast:{},history:{},event:null,audio_revision:0,audio_threshold:saved};
+  else if(u.pathname==='/api/performance'){performanceBody=JSON.parse(route.request().postData());if('gig_mode' in performanceBody)gig=performanceBody.gig_mode;if('audio_workers' in performanceBody)workers=performanceBody.audio_workers;body={gig_mode:gig,audio_workers:workers};}
+  else if(u.pathname==='/api/status')body={gig_mode:gig,audio_workers:workers,counts:{n:3804},job,broadcast:{},history:{},event:null,audio_revision:0,audio_threshold:saved};
   else if(u.pathname==='/api/settings'){if(route.request().method()==='POST')settingsWrites.push(JSON.parse(route.request().postData()));body=settings;}
   else if(u.pathname==='/api/styles')body={};
   else if(u.pathname==='/api/now')body={track_id:current,track:track(current)};
-  else if(u.pathname==='/api/suggest')body={current:track(current),items:Array.from({length:5},(_,i)=>track(i+3)),audio_diagnostics:diagnostic(current),history_context:{before:Array.from({length:3},(_,i)=>({...track(i+40),times:7-i,lists:3,sources:['Moja lista']})),after:Array.from({length:3},(_,i)=>({...track(i+50),times:5-i,lists:2,sources:['Moja istorija']}))}};
+  else if(u.pathname==='/api/suggest'){body={current:track(current),items:Array.from({length:5},(_,i)=>track(i+3)),audio_diagnostics:diagnostic(current),history_context:{before:Array.from({length:3},(_,i)=>({...track(i+40),times:7-i,lists:3,sources:['Moja lista']})),after:Array.from({length:3},(_,i)=>({...track(i+50),times:5-i,lists:2,sources:['Moja istorija']}))}};if(race){const mode=u.searchParams.get('mode');body.items[0]=track(mode==='spustanje'?200:100);if(mode==='podizanje')await new Promise(r=>setTimeout(r,450));}}
   else if(u.pathname==='/api/audio/status')body={counts:{ok:3066,error:2},threshold:saved,errors:[]};
   else if(u.pathname==='/api/audio/tracks')body=[track(1),track(2)];
   else if(u.pathname.startsWith('/api/track/'))body=track(+u.pathname.split('/').pop());
@@ -162,6 +164,18 @@ const {chromium}=require('playwright');
  await page.waitForTimeout(150);
  const savedWeights=settingsWrites.findLast(s=>s.weights);
  if(!savedWeights||Object.keys(savedWeights.weights).some(k=>k==='ntScaleRange'))throw Error('Text slider contaminated ranking weights');
+ await page.locator('#gigMode').check();await page.locator('#audioWorkers').selectOption('2');
+ await page.locator('[data-act="saveperformance"]').click();await page.waitForTimeout(100);
+ if(!gig||workers!==2)throw Error('Performance settings not saved');
+ await navigate('sada');await page.locator('[data-act="togglegig"]').click();await page.waitForTimeout(100);
+ if(gig)throw Error('Console Gig switch failed');
+ race=true;
+ await page.locator('[data-act="mode"][data-m="podizanje"]').click();await page.waitForTimeout(40);
+ await page.locator('[data-act="mode"][data-m="spustanje"]').click();await page.waitForTimeout(700);
+ if(await page.locator('.recommendation').first().getAttribute('data-shortcut-id')!=='200')throw Error('Stale mode reply overwrote current mode');
+ await navigate('set');await page.locator('#gigMode').waitFor();
+ await navigate('sada');
+ if(await page.locator('.recommendation').count()!==5)throw Error('Returning from settings lost console');
  if(await page.title()!=='DJ Miljan Assistant')throw Error('App name');
  if(errors.length)throw Error(errors.join('\n'));
  console.log('UI PASS: compact console 5+(3+3+3) without scroll at 1100x680 and 940x610, menu, Start/Stop, keyboard+MIDI learn, selected file shortcuts');

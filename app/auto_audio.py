@@ -13,6 +13,7 @@ from .scan_control import check_stop, ScanCancelled
 VERSION = 4
 REVISION = 0
 LOCK = threading.Lock()
+SCANNING=threading.Event()
 CONTROL = threading.RLock()
 STOP = threading.Event()
 NML_STAMP = None
@@ -113,14 +114,16 @@ def select_sections(samples, cues=(), sr=11025, stop_event=None):
     return sections
 
 
-def analyze(track, stop_event=None):
+def calculate(payload):
+    """Spawn-safe CPU work. Return descriptors; only the parent writes SQLite."""
     import numpy as np
-    init();cached=db.one('SELECT * FROM auto_chorus WHERE track_id=?',(track['id'],))
-    if valid(cached,track) and cached['status']=='ok': return cached
-    stat=os.stat(track['path']);key=cue_key(track)
+    from . import performance
+    track,key,need_whole=payload
+    stop_event=performance.STOP
+    stat=os.stat(track['path'])
     with tempfile.TemporaryDirectory(prefix='dj-auto-chorus-') as folder:
         pcm=Path(folder)/'mono.f32'
-        command=[audio_rhythm.decoder(),'-v','error','-nostdin','-i',track['path'],'-map','0:a:0','-vn','-ac','1','-ar','11025','-f','f32le',str(pcm)]
+        command=[audio_rhythm.decoder(),'-v','error','-nostdin','-threads','1','-i',track['path'],'-map','0:a:0','-vn','-ac','1','-ar','11025','-f','f32le',str(pcm)]
         with subprocess.Popen(command,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0)) as process:
             try:
                 deadline=time.monotonic()+1800
@@ -147,18 +150,53 @@ def analyze(track, stop_event=None):
             if data:
                 data[0]['song_phrase']=song_phrase
                 if learned_audio.available():data[0]['song_loop']=loop_audio.extract(samples,stop_event=stop_event)
-            _store_whole_rhythm(track,samples,stat,stop_event)
+            whole=None
+            if need_whole:
+                try: whole=(audio_rhythm.analyze_pcm(samples,stop_event=stop_event),"ok",None)
+                except ValueError as exc: whole=({},"error",str(exc))
             if not data: raise ValueError('U kandidatima za refren nema dovoljno audio detalja.')
         finally: del samples
-    # Do not cache a signature against a file/cue revision that changed mid-read.
     end=os.stat(track['path'])
-    if (stat.st_size,stat.st_mtime_ns,key)!=(end.st_size,end.st_mtime_ns,cue_key(track)): raise ValueError('Pesma ili cue su promenjeni tokom skena; ponovi sken.')
-    check_stop(stop_event)
-    db.conn().execute('INSERT OR REPLACE INTO auto_chorus VALUES(?,?,?,?,?,?,?,?,?,?)',(track['id'],track['path'],stat.st_size,stat.st_mtime_ns,VERSION,'ok',json.dumps(data),None,key,learned_audio.MODEL_ID if learned_audio.available() else None))
-    db.conn().commit()
+    if (stat.st_size,stat.st_mtime_ns)!=(end.st_size,end.st_mtime_ns):
+        raise ValueError('Pesma je promenjena tokom skena; ponovi sken.')
+    return dict(data=data,whole=whole,size=stat.st_size,mtime=stat.st_mtime_ns,key=key,
+                model=learned_audio.MODEL_ID if learned_audio.available() else None)
+
+
+def store_calculated(track,result,stop_event=None):
     global REVISION
-    REVISION+=1
+    check_stop(stop_event)
+    stat=os.stat(track['path'])
+    if (stat.st_size,stat.st_mtime_ns,cue_key(track))!=(result['size'],result['mtime'],result['key']):
+        raise ValueError('Pesma ili cue su promenjeni tokom skena; ponovi sken.')
+    if result['whole'] is not None:
+        audio_rhythm.init();features,status,error=result['whole']
+        db.conn().execute('INSERT OR REPLACE INTO audio_rhythm VALUES(?,?,?,?,?,?,?,?)',
+            (track['id'],track['path'],stat.st_size,stat.st_mtime_ns,audio_rhythm.VERSION,status,json.dumps(features),error))
+        audio_rhythm.SCAN_REVISION+=1
+    db.conn().execute('INSERT OR REPLACE INTO auto_chorus VALUES(?,?,?,?,?,?,?,?,?,?)',
+        (track['id'],track['path'],stat.st_size,stat.st_mtime_ns,VERSION,'ok',json.dumps(result['data']),None,result['key'],result['model']))
+    db.conn().commit();REVISION+=1
     return db.one('SELECT * FROM auto_chorus WHERE track_id=?',(track['id'],))
+
+
+def analyze(track, stop_event=None):
+    init();audio_rhythm.init()
+    cached=db.one('SELECT * FROM auto_chorus WHERE track_id=?',(track['id'],))
+    if valid(cached,track) and cached['status']=='ok': return cached
+    from . import performance
+    # The live worker is a separate process too; its stop event is supplied by initializer.
+    payload=(track,cue_key(track),not audio_rhythm.valid(db.one('SELECT * FROM audio_rhythm WHERE track_id=?',(track['id'],)),track))
+    from concurrent.futures import ProcessPoolExecutor, wait
+    import multiprocessing
+    ctx=multiprocessing.get_context('spawn');stop=ctx.Event()
+    with ProcessPoolExecutor(1,mp_context=ctx,initializer=performance.initialize_worker,initargs=(stop,str(db.DB_FILE))) as pool:
+        future=pool.submit(calculate,payload)
+        while not future.done():
+            if stop_event is not None and stop_event.is_set():stop.set()
+            wait([future],timeout=.1)
+        check_stop(stop_event)
+        return store_calculated(track,future.result(),stop_event)
 
 
 def _store_whole_rhythm(track,samples,stat,stop_event):
@@ -197,26 +235,116 @@ def refresh_cues():
     db.conn().commit();NML_STAMP=stamp
 
 
-def scan(progress=None, stop_event=None):
-    global REVISION
-    REVISION+=1
-    init();refresh_cues();tracks=db.rows('SELECT * FROM tracks WHERE on_disk=1 ORDER BY id');done=errors=0
-    for i,track in enumerate(tracks):
+def scan(progress=None,stop_event=None):
+    SCANNING.set();STOP.set()
+    try:
+        while THREAD and THREAD.is_alive():
+            check_stop(stop_event);THREAD.join(.1)
+        return _scan(progress,stop_event)
+    finally:SCANNING.clear()
+
+
+def _record_error(track,exc):
+    try:
+        stat=os.stat(track['path'])
+        db.conn().execute('INSERT OR REPLACE INTO auto_chorus VALUES(?,?,?,?,?,?,?,?,?,?)',
+            (track['id'],track['path'],stat.st_size,stat.st_mtime_ns,VERSION,'error',None,str(exc),cue_key(track),learned_audio.MODEL_ID if learned_audio.available() else None))
+        db.conn().commit()
+    except OSError:pass
+
+
+def _worker_init(stop):
+    from . import performance
+    performance.initialize_worker(stop)
+
+
+def _worker(job):
+    from . import performance
+    track,key=job
+    try:return 'ok',calculate((track,key,True))
+    except ScanCancelled:return 'cancelled',None
+    except (OSError,ValueError) as exc:return 'error',str(exc)
+
+
+def _scan(progress=None,stop_event=None):
+    from . import performance
+    if performance.enabled():raise ValueError('Gig mod je ukljucen; skeniranje je pauzirano.')
+    init();audio_rhythm.init();refresh_cues()
+    tracks=db.rows('SELECT * FROM tracks WHERE on_disk=1 ORDER BY id')
+    return _scan_parallel(tracks,performance.workers(),progress,stop_event)
+
+
+def _scan_parallel(tracks, workers, progress, stop_event):
+    """Same results as the serial scan; decoding and analysis run in worker processes, all writes stay here."""
+    import multiprocessing
+    from . import performance
+    from concurrent import futures
+    from concurrent.futures.process import BrokenProcessPool
+    check_stop(stop_event)
+    total=len(tracks);done=errors=finished=0;todo=[]
+    for track in tracks:
         check_stop(stop_event)
-        if progress: progress(i,len(tracks),'Audio ritam / refren: '+(track['title'] or ''))
-        try:
-            with LOCK: analyze(track,stop_event)
-            done+=1
-        except (OSError,ValueError) as exc:
-            errors+=1
-            # Errors are visible and retryable by the next explicit full scan.
+        cached=db.one('SELECT * FROM auto_chorus WHERE track_id=?',(track['id'],))
+        if valid(cached,track) and cached['status']=='ok': done+=1;finished+=1
+        else: todo.append((track,cue_key(track)))
+    if not todo:return {'ok':done,'errors':0,'workers':0}
+    workers=1 if len(todo)<20 else workers
+    if progress:progress(finished,total,'Audio ritam / refren: pokrecem %d radnika'%workers)
+    ctx=multiprocessing.get_context('spawn');mp_stop=ctx.Event()
+    pool=futures.ProcessPoolExecutor(max_workers=workers,mp_context=ctx,initializer=_worker_init,initargs=(mp_stop,))
+    pending={};queue=iter(todo);leftover=[];unsent=[];cancelled=False
+    def fill():
+        while len(pending)<workers*2:
+            job=next(queue,None)
+            if job is None: return
+            try: pending[pool.submit(_worker,job)]=job
+            except BrokenProcessPool:
+                unsent.append(job);raise
+    def handle(job,kind,payload):
+        nonlocal done,errors,finished
+        track,key=job
+        if kind=='ok':
             try:
-                stat=os.stat(track['path'])
-                db.conn().execute('INSERT OR REPLACE INTO auto_chorus VALUES(?,?,?,?,?,?,?,?,?,?)',(track['id'],track['path'],stat.st_size,stat.st_mtime_ns,VERSION,'error',None,str(exc),cue_key(track),learned_audio.MODEL_ID if learned_audio.available() else None))
-                db.conn().commit()
-            except OSError: pass
-    if progress: progress(len(tracks),len(tracks),'Audio ritam / refren zavrsen')
-    return {'ok':done,'errors':errors}
+                with LOCK: store_calculated(track,payload)
+                done+=1
+            except (OSError,ValueError) as exc: errors+=1;_record_error(track,exc)
+        elif kind=='error': errors+=1;_record_error(track,payload)
+        if kind!='cancelled': finished+=1
+        if progress: progress(finished,total,'Audio ritam / refren: '+(track['title'] or ''))
+    try:
+        try:
+            fill()
+            while pending:
+                if performance.enabled():
+                    cancelled=True;mp_stop.set()
+                if stop_event is not None and stop_event.is_set() and not cancelled:
+                    cancelled=True;mp_stop.set()
+                    for fut in list(pending):
+                        if fut.cancel(): pending.pop(fut)
+                finished_now,_=futures.wait(list(pending),timeout=.3,return_when=futures.FIRST_COMPLETED)
+                for fut in finished_now:
+                    job=pending[fut]
+                    kind,payload=fut.result()
+                    pending.pop(fut)
+                    handle(job,kind,payload)
+                if not cancelled: fill()
+        except BrokenProcessPool:
+            leftover=unsent+list(pending.values())+list(queue);pending.clear()
+    finally:
+        mp_stop.set()
+        pool.shutdown(wait=True,cancel_futures=True)
+    if leftover and not cancelled:  # a worker died (e.g. out of memory): finish the rest the old, serial way
+        for track,_ in leftover:
+            check_stop(stop_event)
+            try:
+                with LOCK: analyze(track,stop_event)
+                done+=1
+            except (OSError,ValueError) as exc: errors+=1;_record_error(track,exc)
+            finished+=1
+            if progress: progress(finished,total,'Audio ritam / refren: '+(track['title'] or ''))
+    if cancelled: raise ScanCancelled({'ok':done,'errors':errors})
+    if progress: progress(total,total,'Audio ritam / refren zavrsen')
+    return {'ok':done,'errors':errors,'workers':workers}
 
 
 def rhythm(a,b):
@@ -307,10 +435,39 @@ def rank(track, source, stop_event, publish=None):
     return all_hits
 
 
+def rank_worker(track,source,options):
+    from . import performance
+    config.SETTINGS['chorus_audio']=options
+    config.SETTINGS['audio_similarity_threshold']=options['rhythm_cutoff']/100
+    try:
+        hits=rank(track,source,performance.STOP) if source else []
+        check_stop(performance.STOP)
+        targets=db.rows('SELECT * FROM tracks WHERE on_disk=1')
+        measured,report=audio_rhythm.rank_audio(track,targets)
+        return hits,(measured,report)
+    finally:db.conn().close();db._local.c=None
+
+
+def rank_background(track,source,event):
+    from concurrent.futures import ProcessPoolExecutor,wait
+    import multiprocessing
+    from . import performance
+    ctx=multiprocessing.get_context('spawn');stop=ctx.Event()
+    with ProcessPoolExecutor(1,mp_context=ctx,initializer=performance.initialize_worker,initargs=(stop,str(db.DB_FILE))) as pool:
+        future=pool.submit(rank_worker,track,source,settings())
+        while not future.done():
+            if event.is_set() or performance.enabled():stop.set()
+            wait([future],timeout=.1)
+        check_stop(event)
+        if performance.enabled():raise ScanCancelled()
+        return future.result()
+
+
 def ensure(track_id):
     """Coalesce current changes; obsolete work never publishes over the current song."""
     global CURRENT,THREAD,STOP,RESULT
-    if not track_id: return
+    from . import performance
+    if not track_id or performance.enabled() or SCANNING.is_set(): return
     with CONTROL:
         CURRENT=int(track_id)
         if THREAD and THREAD.is_alive():
@@ -326,8 +483,8 @@ def ensure(track_id):
         if STATE.get('key')==key: return
         if RESULT and RESULT.get('source_token')!=source_token: RESULT=None
         if not settings()['live_scan']:
-            init();cached=db.one('SELECT * FROM auto_chorus WHERE track_id=?',(CURRENT,))
-            if not track or not valid(cached,track) or cached['status']!='ok':
+            init();audio_rhythm.init();cached=db.one('SELECT * FROM auto_chorus WHERE track_id=?',(CURRENT,))
+            if not track or ((not valid(cached,track) or cached['status']!='ok') and not audio_rhythm.valid(db.one('SELECT * FROM audio_rhythm WHERE track_id=?',(CURRENT,)),track)):
                 RESULT=None
                 STATE.update(track_id=CURRENT,error=None,phase='Live scan OFF — koristim samo sacuvanu bazu',key=key)
                 return
@@ -340,24 +497,26 @@ def ensure(track_id):
                 if not track: raise ValueError('Trenutna pesma nije u biblioteci.')
                 cached=db.one('SELECT * FROM auto_chorus WHERE track_id=?',(tid,))
                 if not valid(cached,track):
-                    if not settings()['live_scan']: raise ValueError('Live scan je iskljucen. Koristim samo sacuvanu bazu; za nove audio podatke pokreni Start u Audio ritam.')
-                    STATE['phase']='Automatski skeniram refren trenutne pesme'
-                    STATE['scanning']=True
-                    try:
-                        with LOCK: cached=analyze(track,event)
-                    finally:STATE['scanning']=False
-                if cached['status']!='ok': raise ValueError(cached.get('error') or 'Ponovi skeniranje pesme.')
+                    if settings()['live_scan']:
+                        STATE['phase']='Automatski skeniram refren trenutne pesme'
+                        STATE['scanning']=True
+                        try:
+                            with LOCK: cached=analyze(track,event)
+                        finally:STATE['scanning']=False
+                    else:cached=None
+                if cached and cached['status']!='ok': raise ValueError(cached.get('error') or 'Ponovi skeniranje pesme.')
                 rank_revision=REVISION
                 def publish_partial(hits):
                     global RESULT
                     with CONTROL:
                         if CURRENT==tid and not event.is_set():
                             RESULT={'track_id':tid,'source_token':source_token,'hits':hits,'sections':[{k:v for k,v in s.items() if k not in ('features','song_phrase','song_loop')} for s in json.loads(cached['data'])],'complete':False}
-                hits=rank(track,cached,event,publish_partial);check_stop(event)
+                hits,whole=rank_background(track,cached,event);check_stop(event)
                 with CONTROL:
                     if CURRENT==tid:
                         changed_during_rank=REVISION!=rank_revision
-                        RESULT={'track_id':tid,'source_token':source_token,'hits':hits,'sections':[{k:v for k,v in s.items() if k not in ('features','song_phrase','song_loop')} for s in json.loads(cached['data'])],'complete':True}
+                        RESULT={'track_id':tid,'source_token':source_token,'hits':hits,'sections':[{k:v for k,v in part.items() if k not in ('features','song_phrase','song_loop')} for part in json.loads(cached['data'])] if cached else [],'complete':True}
+                        audio_rhythm.PREPARED={'track_id':tid,'revision':audio_rhythm.SCAN_REVISION,'whole':whole,'source_stamp':source_token[0][1:]}
                         REVISION+=1
                         STATE.update(phase='Spremno',key=None if changed_during_rank else (tid,REVISION,json.dumps(settings(),sort_keys=True),source_token))
             except ScanCancelled:
@@ -405,6 +564,11 @@ def fifth(current, pool, excluded_ids, diagnostics):
     # Level two uses the existing saved whole-track descriptors and its own
     # quality / tempo / threshold gates. No generic excerpt beat fills LIVE.
     fallback={}
+    from . import performance
+    if performance.enabled() and not (audio_rhythm.PREPARED and audio_rhythm.PREPARED['track_id']==current['id'] and audio_rhythm.PREPARED['revision']==audio_rhythm.SCAN_REVISION):
+        report['fallback_reason']='Gig mod: teska audio poredjenja su pauzirana.'
+        diagnostics.update(report)
+        return None,report['fallback_reason']
     audio,message=audio_rhythm.fifth(current,pool,excluded_ids,fallback) if options['rhythm'] else (None,'Ritam cele pesme je iskljucen.')
     report['whole_rhythm']=fallback
     if audio:

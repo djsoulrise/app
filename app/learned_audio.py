@@ -36,7 +36,7 @@ def session():
             path=ASSETS/'discogs-vinet.onnx'
             metadata=json.loads((ASSETS/'discogs-vinet.json').read_text())
             if hashlib.sha256(path.read_bytes()).hexdigest()!=metadata['onnx_sha256']: raise ValueError('AI model je promenjen ili ostecen.')
-            options=ort.SessionOptions();options.intra_op_num_threads=2;options.inter_op_num_threads=1
+            options=ort.SessionOptions();options.intra_op_num_threads=1;options.inter_op_num_threads=1
             SESSION=ort.InferenceSession(str(path),sess_options=options,providers=['CPUExecutionProvider'])
     return SESSION
 
