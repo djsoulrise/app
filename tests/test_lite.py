@@ -15,7 +15,7 @@ def collection(tmp_path,monkeypatch):
     c=db.conn()
     for i in range(1,101):
         c.execute('INSERT INTO tracks(id,pkey,path,artist,title,bpm,camelot,energy,style,on_disk,in_traktor) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-          (i,str(i),'missing.mp3',f'Artist {i%13}',f'Track {i}',100+i%15,'8A' if i%3 else '9A',3+i%6,json.dumps({'pop_dance':1} if i%4 else {'house':1}),1,1))
+          (i,str(i),'missing.mp3',f'Artist {i%13}',f'Track {chr(65+i//26)}{chr(65+i%26)}',100+i%15,'8A' if i%3 else '9A',3+i%6,json.dumps({'pop_dance':1} if i%4 else {'house':1}),1,1))
     c.execute("INSERT INTO events(id,name,active) VALUES(1,'Test',1)")
     c.execute('INSERT INTO plays(event_id,track_id,rating) VALUES(1,99,1)')
     c.execute("INSERT INTO bans(event_id,kind,value) VALUES(1,'track','98')")
@@ -27,15 +27,19 @@ def collection(tmp_path,monkeypatch):
 def test_original_five_exactly_preserved_and_extra_candidates_unique(collection):
     spec=importlib.util.spec_from_file_location('app.reference_suggest',Path(__file__).with_name('reference_original_suggest.py'))
     reference=importlib.util.module_from_spec(spec);spec.loader.exec_module(reference)
+    tested_nonempty=0
     for current in (1,2,20):
         for mode in ('ravno','podizanje','spustanje'):
             for strict in ('strogo','normalno','slobodno'):
                 expected=reference.suggest(current,mode,strict=strict)
                 actual=suggest.suggest(current,mode,strict=strict)
                 assert actual['items']==expected['items']
+                if len(actual['items'])==5 and len(actual['additional'])==3:tested_nonempty+=1
                 ids=[t['id'] for t in actual['items']+actual['additional']]
                 assert len(ids)==len(set(ids));assert not ({current,98,99}&set(ids))
                 assert len(actual['additional'])<=3
+
+    assert tested_nonempty>=9
 
 def test_no_heavy_modules_or_midi_opened_on_startup():
     code="from app.main import app; import sys; print([x for x in sys.modules if x.split('.')[0] in {'mido','rtmidi','onnxruntime','numpy','scipy','librosa','torch'}]); assert not any('/api/audio' in r.path or '/api/performance' in r.path or r.path.endswith('/ports') for r in app.routes)"
