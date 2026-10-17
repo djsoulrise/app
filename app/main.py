@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import uuid
+import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -112,7 +113,7 @@ def start_job(name: str, fn, kind=None, cancellable=False) -> dict:
             raise HTTPException(409, 'Posao je vec u toku.')
         JOB_STOP.clear()
         JOB.update(running=True, phase=name, done=0, total=0, error=None, result=None,
-                   kind=kind, cancellable=cancellable, stop_requested=False, cancelled=False)
+                   kind=kind, cancellable=cancellable, stop_requested=False, cancelled=False,error_details=None,runtime=None)
     def run():
         try:
             JOB['result'] = fn()
@@ -120,6 +121,11 @@ def start_job(name: str, fn, kind=None, cancellable=False) -> dict:
             JOB.update(cancelled=True, result=exc.result, phase='Zaustavljeno — rezultati sacuvani')
         except Exception as exc:
             JOB['error'] = str(exc)
+            folder=DATA/'logs';folder.mkdir(exist_ok=True)
+            text=traceback.format_exc()
+            (folder/'last-job-error.txt').write_text(text,encoding='utf-8')
+            JOB['error_details']=text
+            JOB['runtime']=performance.runtime_status()
         finally:
             JOB['running'] = False
     threading.Thread(target=run, daemon=True).start()
@@ -164,7 +170,7 @@ def refresh():
 def status():
     c = db.one("SELECT COUNT(*) n, SUM(on_disk) disk, SUM(in_traktor) trk, SUM(flex_grid) flex FROM tracks")
     cur = nowplaying.STATE
-    return {"gig_mode":bool(SETTINGS.get("gig_mode",False)), "audio_workers":performance.workers(), "job": JOB, "counts": c, "now": cur, "broadcast": nowplaying.BROADCAST, "history": nowplaying.HISTORY,
+    return {"gig_mode":bool(SETTINGS.get("gig_mode",False)), "audio_workers":performance.workers(), "scan_turbo":bool(SETTINGS.get("scan_turbo",False)), "cpu_count":os.cpu_count() or 1, "scan_runtime":auto_audio.SCAN_STATE, "job": JOB, "counts": c, "now": cur, "broadcast": nowplaying.BROADCAST, "history": nowplaying.HISTORY,
             "ai": ai.available(), "fpcalc": duplicates._fpcalc() is not None, "guest_url": guest_url(),
             "event": db.one("SELECT * FROM events WHERE active=1 ORDER BY id DESC LIMIT 1"),
             "audio_revision": f"{audio_rhythm.SCAN_REVISION}:{auto_audio.REVISION}", "audio_threshold": json.dumps(auto_audio.settings(),sort_keys=True)}
@@ -1127,10 +1133,13 @@ def performance_settings(request: Request, body: dict = Body(...)):
         if not isinstance(body['gig_mode'],bool):raise HTTPException(400,'Gig mod mora biti ukljucen ili iskljucen.')
         SETTINGS['gig_mode']=body['gig_mode']
         if body['gig_mode']:
-            auto_audio.STOP.set()
+            if auto_audio.STATE.get('scanning'):auto_audio.STOP.set()
             if JOB.get('kind') in ('audio','chorus_library','grid_audio','grid_meta'):JOB_STOP.set()
+    if 'scan_turbo' in body:
+        if not isinstance(body['scan_turbo'],bool):raise HTTPException(400,'Maksimalna brzina mora biti ukljucena ili iskljucena.')
+        SETTINGS['scan_turbo']=body['scan_turbo']
     if 'audio_workers' in body:
-        try:SETTINGS['audio_workers']=max(1,min(4,int(body['audio_workers'])))
-        except (TypeError,ValueError):raise HTTPException(400,'Broj radnika mora biti 1–4.')
+        try:SETTINGS['audio_workers']=max(1,min(os.cpu_count() or 1,int(body['audio_workers'])))
+        except (TypeError,ValueError):raise HTTPException(400,'Broj radnika mora biti ceo broj.')
     config.save(SETTINGS)
-    return {'gig_mode':performance.enabled(),'audio_workers':performance.workers()}
+    return {'gig_mode':performance.enabled(),'audio_workers':performance.workers(),'scan_turbo':bool(SETTINGS.get('scan_turbo',False))}

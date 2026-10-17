@@ -383,8 +383,8 @@ def fifth(current, candidates, excluded, diagnostics=None):
     from . import performance
     saved=PREPARED
     if not saved or saved['track_id']!=current['id'] or saved['revision']!=SCAN_REVISION:
-        if diagnostics is not None:diagnostics.update(current_error='Gig mod' if performance.enabled() else 'Audio poredjenje radi u pozadini',accepted_top=[],top=[])
-        return None,'Gig mod: audio poredjenje je pauzirano.' if performance.enabled() else 'Audio poredjenje se priprema u pozadini.'
+        if diagnostics is not None:diagnostics.update(current_error='Audio poredjenje radi u pozadini',accepted_top=[],top=[])
+        return None,'Audio poredjenje se priprema u pozadini.'
     try:stamp=os.stat(current['path']);source_stamp=(stamp.st_size,stamp.st_mtime_ns)
     except (OSError,KeyError):source_stamp=None
     original=saved.get('source_stamp')

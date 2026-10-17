@@ -132,6 +132,18 @@ class AutoChorusTests(unittest.TestCase):
   with patch.object(auto,'ensure'),patch.object(auto.audio_rhythm,'fifth',return_value=(None,'Nema')):
    report={};winner,_=auto.fifth(current,pool,set(),report)
    self.assertIsNone(winner);self.assertEqual(report['selected_stage'],'normal');self.assertEqual(report['accepted_top'],[])
+ def test_missing_and_corrupt_files_do_not_stop_following_good_track(self):
+  for i in (1,2,3):self.track(i)
+  (self.folder/'1.wav').unlink();(self.folder/'2.wav').write_bytes(b'not audio')
+  result=auto.scan()
+  self.assertEqual(result['ok'],1);self.assertEqual(result['errors'],2)
+  self.assertEqual(db.one('SELECT status FROM auto_chorus WHERE track_id=3')['status'],'ok')
+  self.assertEqual(len(auto.SCAN_STATE['recent_errors']),2)
+ def test_gig_compares_saved_database_without_decoding(self):
+  self.track(1);auto.scan()
+  with patch.dict(config.SETTINGS,{'gig_mode':True}),patch.object(auto,'analyze',side_effect=AssertionError('Gig decoded a new file')):
+   auto.ensure(1);self.assertIsNotNone(auto.THREAD);auto.THREAD.join(20)
+   self.assertFalse(auto.THREAD.is_alive());self.assertEqual(auto.RESULT['track_id'],1)
  def test_stop_before_decode(self):
   self.track(1);stop=threading.Event();stop.set()
   with self.assertRaises(ScanCancelled):auto.scan(stop_event=stop)

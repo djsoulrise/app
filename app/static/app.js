@@ -115,6 +115,8 @@ async function refreshStatus() {
       $('#dayExportResult').textContent=j.error?'Izvoz nije zavrsen: '+j.error:'Izvoz: '+(j.result?.path||'')+' · Kopirano '+(j.result?.copied||0)+' · Nedostaje '+(j.result?.missing?.length||0);
     }
     updateScanControls(j);
+    if($('#scanSkipped'))$('#scanSkipped').innerHTML=(s.scan_runtime?.recent_errors||[]).map(x=>esc(x.path)+' — '+esc(x.error)).join('<br>')||'Nema prijavljenih gresaka.';
+    if($('#scanRuntime')){const x=s.scan_runtime||{};$('#scanRuntime').textContent=`Aktivno ${Object.keys(x.active||{}).length}/${x.workers||0} radnika · Novo obradjeno ${x.finished||0} · Preskoceno sa greskom ${x.errors||0}${x.seconds_per_track?' · '+x.seconds_per_track+' s/pesmi ukupno':''}`;} 
     if (state.jobWasRunning && !j.running && !j.error) { toast(j.cancelled ? 'Zaustavljeno — rezultati sacuvani' : 'Zavrseno'); if (j.kind==='day_export' && state.page==='eve') { $('#dayExportResult').textContent='Izvoz: '+(j.result?.path||'')+' · Kopirano '+(j.result?.copied||0)+' · Nedostaje '+(j.result?.missing?.length||0); } else if (state.page !== 'sada') go(state.page); }
     state.jobWasRunning = j.running;
   } catch {}
@@ -440,7 +442,7 @@ pages.set = async () => {
   const s = await api('/api/settings'), st = await api('/api/status');
   if(state.page!=='set')return;
   const w = s.weights, W = {hist: 'Moje liste (history)', key: 'Key harmonija', bpm: 'BPM', vibe: 'Vajb (tagovi/pozicija)', energy: 'Energija', year: 'Godina', genre: 'Zanr', feedback: 'Ocene (palo/nije)'};
-  $('#main').innerHTML = `<h2>Podesavanja</h2><div class="card"><h3>Performanse / nastup</h3><label><input id="gigMode" type="checkbox" ${st.gig_mode?'checked':''}> Gig mod — pauziraj skeniranje i teska AI poredjenja</label><p class="small mut">Koristi zavrsene rezultate za trenutnu pesmu; inace izvorne preporuke. AI poredjenje radi odvojeno, na nizem prioritetu i sa jednom racunskom niti.</p><label>Paralelni sken: <select id="audioWorkers">${[1,2,3,4].map(n=>`<option value="${n}" ${n==st.audio_workers?'selected':''}>${n}</option>`).join('')}</select> radnika</label><button data-act="saveperformance">Sacuvaj performanse</button></div>
+  $('#main').innerHTML = `<h2>Podesavanja</h2><div class="card"><h3>Performanse / nastup</h3><label><input id="gigMode" type="checkbox" ${st.gig_mode?'checked':''}> Gig mod — pauziraj novi sken; AI preporuke iz baze ostaju aktivne</label><p class="small mut">AI poredjenje skenirane baze nastavlja u jednom odvojenom radniku sa nizim prioritetom. Gig mod blokira dekodiranje novih pesama.</p><label>Paralelni sken: <select id="audioWorkers">${Array.from({length:st.cpu_count||4},(_,i)=>i+1).map(n=>`<option value="${n}" ${n==st.audio_workers?'selected':''}>${n}</option>`).join('')}</select> radnika</label><p><label><input id="scanTurbo" type="checkbox" ${st.scan_turbo?'checked':''}> Maksimalna brzina skeniranja — sva CPU jezgra, uz RAM ogranicenje</label></p><button data-act="saveperformance">Sacuvaj performanse</button></div>
     <div class="card"><h3>Velicina teksta</h3><label><input type="checkbox" id="ctrlWheelText" ${ctrlWheelText ? 'checked' : ''}> Ctrl + tockic misa povecava / smanjuje tekst u celoj aplikaciji</label>
     <div class="row"><button data-act="fontsmaller">A−</button><input type="range" id="fontScaleRange" min="75" max="160" step="5" value="${fontScale}" aria-label="Velicina teksta"><b id="fontScaleValue">${fontScale}%</b><button data-act="fontlarger">A+</button><button data-act="fontreset">Pocetna velicina</button></div><p class="small mut">Ctrl + skrol gore: veci tekst. Ctrl + skrol dole: manji tekst. Promena se cuva odmah na ovom racunaru.</p></div>
     <div class="card"><h3>Biblioteka</h3>
@@ -627,7 +629,7 @@ pages.audio = async () => {
   const s = await api('/api/audio/chorus/status'), o=s.settings;
   $('#main').innerHTML = `<h2>Audio ritam — ista ili slicna muzika</h2>
   <p>Indeks muzickih fraza: <b>${s.counts.ok || 0}</b> pesama; greske: ${s.counts.error || 0}. Ova verzija proverava muzicke fraze kroz celu pesmu. Za nove osobine pokreni Start; stari ritam ostaje sacuvan. Model je ukljucen u EXE i radi offline.</p>
-  <div class="card"><h3>Skeniraj celu biblioteku</h3>${scanButtons('chorus_library')}<p>Start nastavlja od novih ili promenjenih pesama. Stop cuva zavrsene rezultate. Traktor kolekcija i audio fajlovi se samo citaju.</p></div>
+  <div class="card"><h3>Skeniraj celu biblioteku</h3><p id="scanRuntime" class="small mut">Status radnika se ucitava...</p><details><summary>Preskocene pesme / greske</summary><div id="scanSkipped" class="small mut"></div></details>${scanButtons('chorus_library')}<p>Start nastavlja od novih ili promenjenih pesama. Stop cuva zavrsene rezultate. Traktor kolekcija i audio fajlovi se samo citaju.</p></div>
   <div class="card"><h3>Audio baza — prenos PC / laptop</h3><p id="audioDbPath" class="small mut"></p>
   <div class="row"><button data-act="cacheexport">Izvezi audio bazu</button><button data-act="cachepick">Uvezi audio bazu</button><button data-act="cachecheck">Proveri skenirano (bez skena)</button></div>
   <p class="small mut">Prenose se potpisi, bez muzike. Isti fajl se povezuje SHA256 proverom, nezavisno od putanje. Promenjen fajl ili model ne prolazi kao kompatibilan.</p>
@@ -1006,8 +1008,8 @@ document.addEventListener('change',e=>{
  })();
 });
 
-actions.saveperformance=async()=>{const d=await api('/api/performance',{gig_mode:$('#gigMode').checked,audio_workers:+$('#audioWorkers').value});acceptPerformance(d);toast(d.gig_mode?'Gig mod ukljucen':'Gig mod iskljucen');};
+actions.saveperformance=async()=>{const d=await api('/api/performance',{gig_mode:$('#gigMode').checked,audio_workers:+$('#audioWorkers').value,scan_turbo:$('#scanTurbo').checked});acceptPerformance(d);toast(d.gig_mode?'Gig mod ukljucen':'Gig mod iskljucen');};
 
-actions.togglegig=async()=>{const d=await api('/api/performance',{gig_mode:!state.status?.gig_mode});acceptPerformance(d);toast(d.gig_mode?'Gig mod ukljucen — teski poslovi zaustavljeni':'Gig mod iskljucen');};
+actions.togglegig=async()=>{const d=await api('/api/performance',{gig_mode:!state.status?.gig_mode});acceptPerformance(d);toast(d.gig_mode?'Gig mod ukljucen — sken pauziran, AI iz baze radi':'Gig mod iskljucen');};
 
 function acceptPerformance(d){state.performanceEpoch=(state.performanceEpoch||0)+1;state.status={...state.status,...d};if($('#gigLabel'))$('#gigLabel').textContent=d.gig_mode?'ON':'OFF';}

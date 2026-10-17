@@ -59,7 +59,10 @@ def main() -> None:
         db.init()
         from concurrent.futures import ProcessPoolExecutor
         from app import performance
-        ctx=multiprocessing.get_context('spawn')
+        if getattr(sys,'frozen',False):
+            sys._base_executable=r'C:\DJ_MISSING_BUILD_HOST\python.exe'
+            multiprocessing.set_executable(sys._base_executable)
+        ctx=performance.spawn_context()
         with ProcessPoolExecutor(2,mp_context=ctx,initializer=performance.initialize_worker,initargs=(ctx.Event(),str(db.DB_FILE))) as pool:
             probes=[pool.submit(performance.worker_probe) for _ in range(2)]
             for future in probes:

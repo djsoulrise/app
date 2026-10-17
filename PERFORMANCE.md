@@ -1,4 +1,4 @@
-# Audio13 resource policy
+# Audio14 resource policy
 
 The supplied parallel-scan queue and BrokenProcessPool recovery are retained. Only the parent process commits SQLite changes. Files and cue revisions are checked before any descriptor write. Completed tracks survive Stop and resume; a failed worker does not discard its submitted or unsent tracks.
 
@@ -9,3 +9,7 @@ AI recommendation search runs in one separate worker, at below normal priority. 
 Gig mode cancels deep audio/grid jobs and AI search and prevents them from starting. Completed results for the current song can still be used; otherwise the original recommendation path remains available. Gig mode persists across launches and can be toggled from the console or Settings. Scanning and cache imports should be done outside a performance. The application never changes Traktor process priority or its files.
 
 Validation: full local suite with the bundled model, original-vs-worker descriptor equality including neural features on a synthetic 28-second recording, deterministic FFT-screen equality, failed-worker recovery, pending-track threshold, read-only polling, and pre-write file-change rejection. Windows CI additionally checks compact layouts, stale energy-mode responses, Gig controls, restoration of the console, native WebView restoration and actual two-worker neural extraction from the packaged EXE. Real-time audio continuity with Traktor still requires validation on the DJ computer; no multicore speedup factor is claimed from the constrained test environment.
+
+## Audio14 correction
+
+Gig mode now blocks only new decoding/scanning. Cached-data AI comparison continues in one low-priority worker. Maximum scan mode can use all logical CPUs, constrained by available memory with 768 MiB per worker and 30% memory headroom. Manual worker count can use up to CPU count. Worker PID/activity, file errors, and elapsed wall seconds per newly processed track are reported separately from cached tracks. Missing and corrupt music is skipped; missing decoder/executable is a distinct engine error. Per-track work has a cooperative 180-second bound. Full job tracebacks and executable diagnostics are retained for startup failures. Frozen Windows spawning pins the running module executable and disables Python venv redirection; CI exercises a missing build-host Python path and worker startup after native GUI initialization.

@@ -10,10 +10,14 @@ from pathlib import Path
 from . import audio_rhythm, chorus, config, db, learned_audio, phrase_match, sample_match, loop_audio
 from .scan_control import check_stop, ScanCancelled
 
+class AudioEngineError(RuntimeError):
+    pass
+
 VERSION = 4
 REVISION = 0
 LOCK = threading.Lock()
 SCANNING=threading.Event()
+SCAN_STATE={"active":{},"workers":0,"cached":0,"finished":0,"errors":0,"recent_errors":[],"seconds_per_track":None}
 CONTROL = threading.RLock()
 STOP = threading.Event()
 NML_STAMP = None
@@ -119,12 +123,20 @@ def calculate(payload):
     import numpy as np
     from . import performance
     track,key,need_whole=payload
-    stop_event=performance.STOP
+    deadline=time.monotonic()+180
+    class TrackStop:
+        def is_set(self):
+            if time.monotonic()>deadline:raise ValueError('Pesma je preskocena: analiza je prekoracila 180 sekundi.')
+            return performance.STOP is not None and performance.STOP.is_set()
+    stop_event=TrackStop()
     stat=os.stat(track['path'])
     with tempfile.TemporaryDirectory(prefix='dj-auto-chorus-') as folder:
         pcm=Path(folder)/'mono.f32'
         command=[audio_rhythm.decoder(),'-v','error','-nostdin','-threads','1','-i',track['path'],'-map','0:a:0','-vn','-ac','1','-ar','11025','-f','f32le',str(pcm)]
-        with subprocess.Popen(command,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0)) as process:
+        try:
+            process=subprocess.Popen(command,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        except OSError as exc:raise AudioEngineError('Ne mogu da pokrenem FFmpeg dekoder: '+command[0]+'; '+str(exc)) from exc
+        with process:
             try:
                 deadline=time.monotonic()+1800
                 while True:
@@ -189,7 +201,7 @@ def analyze(track, stop_event=None):
     payload=(track,cue_key(track),not audio_rhythm.valid(db.one('SELECT * FROM audio_rhythm WHERE track_id=?',(track['id'],)),track))
     from concurrent.futures import ProcessPoolExecutor, wait
     import multiprocessing
-    ctx=multiprocessing.get_context('spawn');stop=ctx.Event()
+    ctx=performance.spawn_context();stop=ctx.Event()
     with ProcessPoolExecutor(1,mp_context=ctx,initializer=performance.initialize_worker,initargs=(stop,str(db.DB_FILE))) as pool:
         future=pool.submit(calculate,payload)
         while not future.done():
@@ -253,17 +265,23 @@ def _record_error(track,exc):
     except OSError:pass
 
 
-def _worker_init(stop):
+def _worker_init(stop,events=None):
     from . import performance
     performance.initialize_worker(stop)
+    performance.EVENTS=events
 
 
 def _worker(job):
     from . import performance
     track,key=job
+    events=getattr(performance,'EVENTS',None)
+    if events is not None:events.put({'pid':os.getpid(),'id':track['id'],'title':track.get('title') or track['path'],'running':True})
     try:return 'ok',calculate((track,key,True))
     except ScanCancelled:return 'cancelled',None
-    except (OSError,ValueError) as exc:return 'error',str(exc)
+    except AudioEngineError:raise
+    except Exception as exc:return 'error',type(exc).__name__+': '+str(exc)
+    finally:
+        if events is not None:events.put({'pid':os.getpid(),'running':False})
 
 
 def _scan(progress=None,stop_event=None):
@@ -282,17 +300,29 @@ def _scan_parallel(tracks, workers, progress, stop_event):
     from concurrent.futures.process import BrokenProcessPool
     check_stop(stop_event)
     total=len(tracks);done=errors=finished=0;todo=[]
+    SCAN_STATE.update(active={},workers=workers,cached=0,finished=0,errors=0,recent_errors=[],seconds_per_track=None)
     for track in tracks:
         check_stop(stop_event)
         cached=db.one('SELECT * FROM auto_chorus WHERE track_id=?',(track['id'],))
         if valid(cached,track) and cached['status']=='ok': done+=1;finished+=1
         else: todo.append((track,cue_key(track)))
+    SCAN_STATE['cached']=done
     if not todo:return {'ok':done,'errors':0,'workers':0}
-    workers=1 if len(todo)<20 else workers
+    workers=1 if len(todo)<20 and not config.SETTINGS.get('scan_turbo') else workers
+    workers=min(workers,len(todo));SCAN_STATE['workers']=workers
     if progress:progress(finished,total,'Audio ritam / refren: pokrecem %d radnika'%workers)
-    ctx=multiprocessing.get_context('spawn');mp_stop=ctx.Event()
-    pool=futures.ProcessPoolExecutor(max_workers=workers,mp_context=ctx,initializer=_worker_init,initargs=(mp_stop,))
+    ctx=performance.spawn_context();mp_stop=ctx.Event();events=ctx.Queue();started=time.monotonic()
+    pool=futures.ProcessPoolExecutor(max_workers=workers,mp_context=ctx,initializer=_worker_init,initargs=(mp_stop,events))
     pending={};queue=iter(todo);leftover=[];unsent=[];cancelled=False
+    def drain_events():
+        from queue import Empty
+        while True:
+            try:event=events.get_nowait()
+            except Empty:break
+            if event['running']:SCAN_STATE['active'][str(event['pid'])]=event
+            else:SCAN_STATE['active'].pop(str(event['pid']),None)
+        processed=finished-SCAN_STATE['cached']
+        SCAN_STATE.update(finished=processed,errors=errors,seconds_per_track=round((time.monotonic()-started)/processed,2) if processed else None)
     def fill():
         while len(pending)<workers*2:
             job=next(queue,None)
@@ -308,13 +338,16 @@ def _scan_parallel(tracks, workers, progress, stop_event):
                 with LOCK: store_calculated(track,payload)
                 done+=1
             except (OSError,ValueError) as exc: errors+=1;_record_error(track,exc)
-        elif kind=='error': errors+=1;_record_error(track,payload)
+        elif kind=='error':
+            errors+=1;_record_error(track,payload)
+            SCAN_STATE['recent_errors']=(SCAN_STATE['recent_errors']+[{'id':track['id'],'path':track.get('path'),'error':str(payload)}])[-30:]
         if kind!='cancelled': finished+=1
         if progress: progress(finished,total,'Audio ritam / refren: '+(track['title'] or ''))
     try:
         try:
             fill()
             while pending:
+                drain_events()
                 if performance.enabled():
                     cancelled=True;mp_stop.set()
                 if stop_event is not None and stop_event.is_set() and not cancelled:
@@ -333,6 +366,7 @@ def _scan_parallel(tracks, workers, progress, stop_event):
     finally:
         mp_stop.set()
         pool.shutdown(wait=True,cancel_futures=True)
+        drain_events();SCAN_STATE['active']={};events.close();events.join_thread()
     if leftover and not cancelled:  # a worker died (e.g. out of memory): finish the rest the old, serial way
         for track,_ in leftover:
             check_stop(stop_event)
@@ -452,14 +486,13 @@ def rank_background(track,source,event):
     from concurrent.futures import ProcessPoolExecutor,wait
     import multiprocessing
     from . import performance
-    ctx=multiprocessing.get_context('spawn');stop=ctx.Event()
+    ctx=performance.spawn_context();stop=ctx.Event()
     with ProcessPoolExecutor(1,mp_context=ctx,initializer=performance.initialize_worker,initargs=(stop,str(db.DB_FILE))) as pool:
         future=pool.submit(rank_worker,track,source,settings())
         while not future.done():
-            if event.is_set() or performance.enabled():stop.set()
+            if event.is_set():stop.set()
             wait([future],timeout=.1)
         check_stop(event)
-        if performance.enabled():raise ScanCancelled()
         return future.result()
 
 
@@ -467,7 +500,7 @@ def ensure(track_id):
     """Coalesce current changes; obsolete work never publishes over the current song."""
     global CURRENT,THREAD,STOP,RESULT
     from . import performance
-    if not track_id or performance.enabled() or SCANNING.is_set(): return
+    if not track_id or SCANNING.is_set(): return
     with CONTROL:
         CURRENT=int(track_id)
         if THREAD and THREAD.is_alive():
@@ -482,7 +515,7 @@ def ensure(track_id):
         key=(CURRENT,REVISION,json.dumps(settings(),sort_keys=True),source_token)
         if STATE.get('key')==key: return
         if RESULT and RESULT.get('source_token')!=source_token: RESULT=None
-        if not settings()['live_scan']:
+        if not settings()['live_scan'] or performance.enabled():
             init();audio_rhythm.init();cached=db.one('SELECT * FROM auto_chorus WHERE track_id=?',(CURRENT,))
             if not track or ((not valid(cached,track) or cached['status']!='ok') and not audio_rhythm.valid(db.one('SELECT * FROM audio_rhythm WHERE track_id=?',(CURRENT,)),track)):
                 RESULT=None
@@ -496,8 +529,8 @@ def ensure(track_id):
                 init();refresh_cues();track=db.one('SELECT * FROM tracks WHERE id=?',(tid,))
                 if not track: raise ValueError('Trenutna pesma nije u biblioteci.')
                 cached=db.one('SELECT * FROM auto_chorus WHERE track_id=?',(tid,))
-                if not valid(cached,track):
-                    if settings()['live_scan']:
+                if not valid(cached,track) or cached['status']!='ok':
+                    if settings()['live_scan'] and not performance.enabled():
                         STATE['phase']='Automatski skeniram refren trenutne pesme'
                         STATE['scanning']=True
                         try:
@@ -565,10 +598,6 @@ def fifth(current, pool, excluded_ids, diagnostics):
     # quality / tempo / threshold gates. No generic excerpt beat fills LIVE.
     fallback={}
     from . import performance
-    if performance.enabled() and not (audio_rhythm.PREPARED and audio_rhythm.PREPARED['track_id']==current['id'] and audio_rhythm.PREPARED['revision']==audio_rhythm.SCAN_REVISION):
-        report['fallback_reason']='Gig mod: teska audio poredjenja su pauzirana.'
-        diagnostics.update(report)
-        return None,report['fallback_reason']
     audio,message=audio_rhythm.fifth(current,pool,excluded_ids,fallback) if options['rhythm'] else (None,'Ritam cele pesme je iskljucen.')
     report['whole_rhythm']=fallback
     if audio:

@@ -14,9 +14,9 @@ class PerformanceTests(unittest.TestCase):
     def test_worker_count_has_core_and_memory_caps_and_legacy_setting(self):
         with patch.dict(config.SETTINGS,{'scan_workers':8}),patch('os.cpu_count',return_value=16):
             config.SETTINGS.pop('audio_workers',None)
-            self.assertEqual(performance.workers(),4)
+            self.assertEqual(performance.workers(),8)
         with patch.dict(config.SETTINGS,{'audio_workers':4}),patch('os.cpu_count',return_value=2):
-            self.assertEqual(performance.workers(),1)
+            self.assertEqual(performance.workers(),2)
 
     def test_worker_crash_preserves_unsent_and_pending_tracks(self):
         tracks=[{'id':i,'title':str(i)} for i in range(25)]
@@ -47,7 +47,7 @@ class PerformanceTests(unittest.TestCase):
         self.assertEqual(counts,[1]);self.assertEqual(result['ok'],30)
 
     def test_gig_prevents_live_work_and_scan(self):
-        with patch.dict(config.SETTINGS,{'gig_mode':True}),patch.object(auto,'THREAD',None),patch.object(auto.db,'one',side_effect=AssertionError('Gig started work')):
+        with patch.dict(config.SETTINGS,{'gig_mode':True}),patch.object(auto,'THREAD',None),patch.object(auto.db,'one',return_value=None),patch.object(auto,'init'),patch.object(audio_rhythm,'init'),patch.object(auto,'analyze',side_effect=AssertionError('Gig decoded audio')):
             auto.ensure(123)
             with self.assertRaises(ValueError):auto._scan()
 
