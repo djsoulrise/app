@@ -69,6 +69,20 @@ class ShortcutsTests(unittest.TestCase):
             self.m.fire('focus_search');self.m.fire('copy_song')
             self.assertEqual([e['action'] for e in self.m.queued(1)],['copy_song'])
             self.assertEqual(window.show.call_count,2)
+    def test_keyboard_scope_checks_executable_and_editing(self):
+        import ctypes
+        from ctypes import wintypes
+        w=sc.WindowsWindow.__new__(sc.WindowsWindow)
+        w.ctypes=ctypes;w.wintypes=wintypes;w.own=lambda:100
+        foreground=[200];image=[r'C:\Program Files\Traktor Pro 4\Traktor.exe']
+        def query(handle,flags,text,size): text.value=image[0];return True
+        w.user=Msg(GetForegroundWindow=lambda:foreground[0],GetWindowThreadProcessId=lambda h,p:None)
+        w.kernel=Msg(OpenProcess=lambda *args:1,QueryFullProcessImageNameW=query,CloseHandle=lambda h:None)
+        self.assertTrue(w.keyboard_scope(True))  # Traktor remains usable when Assistant had a search field focused.
+        image[0]=r'C:\Browser\msedge.exe'
+        self.assertFalse(w.keyboard_scope(False))
+        foreground[0]=100
+        self.assertFalse(w.keyboard_scope(True));self.assertTrue(w.keyboard_scope(False))
     def test_remote_clients_blocked(self):
         from app.main import _shortcut_local
         from fastapi import HTTPException

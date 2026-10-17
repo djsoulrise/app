@@ -1,5 +1,6 @@
 """Learnable window/UI shortcuts. No Traktor load/play commands or MIDI output."""
 import copy
+import ntpath
 import threading
 import time
 
@@ -248,6 +249,7 @@ class WindowsWindow:
     def __init__(self,title):
         import ctypes
         from ctypes import wintypes
+        self.wintypes=wintypes
         self.ctypes=ctypes;self.user=ctypes.WinDLL('user32');self.title=title;self.previous=None
         self.user.FindWindowW.argtypes=[wintypes.LPCWSTR,wintypes.LPCWSTR];self.user.FindWindowW.restype=wintypes.HWND
         self.user.GetForegroundWindow.restype=wintypes.HWND
@@ -256,15 +258,28 @@ class WindowsWindow:
         self.user.ShowWindow.argtypes=[wintypes.HWND,ctypes.c_int]
         self.user.SetForegroundWindow.argtypes=[wintypes.HWND]
         self.user.IsWindow.argtypes=[wintypes.HWND]
+        self.user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
+        self.kernel=ctypes.WinDLL('kernel32')
+        self.kernel.OpenProcess.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD]
+        self.kernel.OpenProcess.restype=wintypes.HANDLE
+        self.kernel.QueryFullProcessImageNameW.argtypes=[wintypes.HANDLE,wintypes.DWORD,wintypes.LPWSTR,ctypes.POINTER(wintypes.DWORD)]
+        self.kernel.CloseHandle.argtypes=[wintypes.HANDLE]
 
     def own(self): return self.user.FindWindowW(None,self.title)
 
     def keyboard_scope(self,editing):
         foreground=self.user.GetForegroundWindow();own=self.own()
         if foreground==own and own: return not editing
-        text=self.ctypes.create_unicode_buffer(512)
-        self.user.GetWindowTextW(foreground,text,512)
-        return 'traktor' in text.value.lower()
+        # Check executable identity: a browser title containing "Traktor" is not Traktor.
+        pid=self.wintypes.DWORD()
+        self.user.GetWindowThreadProcessId(foreground,self.ctypes.byref(pid))
+        handle=self.kernel.OpenProcess(0x1000,False,pid.value)
+        if not handle: return False
+        try:
+            text=self.ctypes.create_unicode_buffer(32768);size=self.wintypes.DWORD(len(text))
+            return bool(self.kernel.QueryFullProcessImageNameW(handle,0,text,self.ctypes.byref(size))) and ntpath.basename(text.value).lower()=='traktor.exe'
+        finally:
+            self.kernel.CloseHandle(handle)
 
     def show(self):
         own=self.own()
