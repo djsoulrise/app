@@ -56,10 +56,10 @@ const {chromium}=require('playwright');
    const rows=[...document.querySelectorAll('.recommendation')],live=[...document.querySelectorAll('.live-audio-item')];
    const inside=el=>{const b=el.getBoundingClientRect();return b.top>=0&&b.bottom<=innerHeight&&b.left>=0&&b.right<=innerWidth;};
    const boxes=[document.querySelector('.suggestions-panel').getBoundingClientRect(),document.querySelector('.live-panel').getBoundingClientRect()];
-   return {rows:rows.length,live:live.length,visible:[...rows,...live,...document.querySelectorAll('.rec-actions button,.live-actions button')].every(inside),equal:Math.abs(boxes[0].height-boxes[1].height)<1,side:boxes[1].left>boxes[0].left,noScroll:document.documentElement.scrollHeight<=innerHeight+1,hidden:!document.querySelector('#nav').getBoundingClientRect().height,overflow:rows.some(el=>el.scrollHeight>el.clientHeight+2)||live.some(el=>el.scrollHeight>el.clientHeight+2)};
+   return {rows:rows.length,live:live.length,visible:[...rows,...live,...document.querySelectorAll('.rec-actions button,.live-actions button')].every(inside),equal:Math.abs(boxes[0].height-boxes[1].height)<1,side:boxes[1].left>boxes[0].left,noScroll:document.documentElement.scrollHeight<=innerHeight+1,noClip:[document.querySelector('#sug'),document.querySelector('.live-list')].every(el=>el.scrollHeight<=el.clientHeight+1),hidden:!document.querySelector('#nav').getBoundingClientRect().height,overflow:rows.some(el=>el.scrollHeight>el.clientHeight+2)||live.some(el=>el.scrollHeight>el.clientHeight+2)};
   });
   await page.screenshot({path:'ui-console-'+width+'x'+height+'.png'});
-  if(result.rows!==5||result.live!==10||!result.visible||!result.equal||!result.side||!result.noScroll||!result.hidden||result.overflow)throw Error('Compact console '+width+'x'+height+': '+JSON.stringify(result));
+  if(result.rows!==5||result.live!==10||!result.visible||!result.equal||!result.side||!result.noScroll||!result.noClip||!result.hidden||result.overflow)throw Error('Compact console '+width+'x'+height+': '+JSON.stringify(result));
  }
  await checkConsole(1100,680);await checkConsole(940,610);await page.setViewportSize({width:1100,height:680});
  await page.locator('[data-act="consoledetails"]').click();

@@ -179,3 +179,5 @@ body.large-text .live-context{font-size:calc(8px * var(--font-scale,1))}
 body.large-text .live-actions{flex-shrink:0}
 
 @media(max-height:700px) and (min-width:900px){.live-audio-item{padding:1px 1px}.live-secondary{margin-top:1px}.live-actions button{padding:1px 3px}}
+
+@media(max-height:700px) and (min-width:900px){.rec-meta .badge{line-height:1.05}.rec-actions button{padding:2px 4px}}
