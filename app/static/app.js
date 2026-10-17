@@ -629,12 +629,13 @@ api('/api/settings').then(s => { state.strict = s.style_strictness || 'normalno'
 pages.audio = async () => {
   const s = await api('/api/audio/chorus/status'), o=s.settings;
   $('#main').innerHTML = `<h2>Audio ritam — automatski refreni</h2>
-  <p>Indeks refrena: <b>${s.counts.ok || 0}</b> pesama; greske: ${s.counts.error || 0}. Stari deep scan ostaje sacuvan, ali za refrene je potreban novi sken.</p>
+  <p>Indeks refrena: <b>${s.counts.ok || 0}</b> pesama; greske: ${s.counts.error || 0}. Za AI potpise je potreban novi sken; prethodni rezultati ostaju sacuvani. Model je ukljucen u EXE i radi offline.</p>
   <div class="card"><h3>Skeniraj celu biblioteku</h3>${scanButtons('chorus_library')}<p>Start nastavlja od novih ili promenjenih pesama. Stop cuva zavrsene rezultate. Traktor kolekcija i audio fajlovi se samo citaju.</p></div>
   <div class="card"><h3>Automatski peti predlog i LIVE lista</h3>
   <label><input id="chorusAuto" type="checkbox" ${o.auto_scan?'checked':''}> Automatski skeniraj trenutnu pesmu ako nije u indeksu</label>
   <p><label><input id="chorusWhole" type="checkbox" ${o.whole_library!==false?'checked':''}> Trazi audio veze u celoj biblioteci, nezavisno od key-a, tagova i zanra</label></p>
   <div class="row"><label><input id="chorusRhythm" type="checkbox" ${o.rhythm?'checked':''}> Ritam</label><input id="chorusR" type="number" min="50" max="100" value="${o.rhythm_cutoff}" style="width:80px"> %</div>
+  <p><label><input id="chorusLearned" type="checkbox" ${o.learned_model!==false?'checked':''}> Obuceni AI model za muzicke motive</label> · prag AI <input id="chorusNN" type="number" min="50" max="100" value="${o.neural_cutoff||80}" style="width:75px"> %</p>
   <div class="row"><label><input id="chorusTonal" type="checkbox" ${o.tonal?'checked':''}> Motiv / melodijska fraza</label><input id="chorusT" type="number" min="50" max="100" value="${o.tonal_cutoff}" style="width:80px"> %</div>
   <p>Prolazi slican ritam ILI melodijski motiv; oba prolaza imaju prednost. Motiv prati promene fraze, nije isti key niti identitet glasa. Ritam se poredi posle normalizacije audio tempa; sam BPM nije dokaz poklapanja. Bez prolaza nema nasumicne audio dopune.</p>
   <button class="pri" data-act="chorussave">Sacuvaj audio uslove</button></div>
@@ -650,16 +651,17 @@ pages.audio = async () => {
   }
   await poll();state.timer=setInterval(()=>poll().catch(()=>{}),2500);
 };
-actions.chorussave=async()=>{await api('/api/audio/chorus/settings',{auto_scan:$('#chorusAuto').checked,whole_library:$('#chorusWhole').checked,rhythm:$('#chorusRhythm').checked,tonal:$('#chorusTonal').checked,rhythm_cutoff:+$('#chorusR').value,tonal_cutoff:+$('#chorusT').value});toast('Audio uslovi sacuvani');};
+actions.chorussave=async()=>{await api('/api/audio/chorus/settings',{auto_scan:$('#chorusAuto').checked,whole_library:$('#chorusWhole').checked,learned_model:$('#chorusLearned').checked,neural_cutoff:+$('#chorusNN').value,rhythm:$('#chorusRhythm').checked,tonal:$('#chorusTonal').checked,rhythm_cutoff:+$('#chorusR').value,tonal_cutoff:+$('#chorusT').value});toast('Audio uslovi sacuvani');};
 
 function audioDiagnosticHtml(d) {
   if (!d || !d.current_id) return '';
   if (d.engine==='chorus') return `<details class="card" open><summary>Audio ritam / refren — nalaz</summary>
+  <p>${d.learned_model?.available?'Obuceni model: Discogs-VINet (offline).':'AI model nije dostupan u ovoj verziji.'} AI prag ${d.options.neural_cutoff||80}%.</p>
   <p>Ritam ${d.options.rhythm?'ukljucen':'iskljucen'} ${d.options.rhythm_cutoff}% · tonalno ${d.options.tonal?'ukljuceno':'iskljuceno'} ${d.options.tonal_cutoff}% · prolaz ILI</p>
   ${d.current_error?'<p>'+esc(d.current_error)+'</p>':''}
   ${(d.sections||[]).map(s=>`<p>Izvor ${timecode(s.start)}–${timecode(s.end)} · ${esc(s.reason)}</p>`).join('')}
   <p>${d.options.whole_library?'Biblioteka bez key/genre filtera':'Izvorni filteri'}: ${d.pool}; audio uporedjeno ${d.compared}. Tonalno: detaljna provera do ${d.shortlist_limit} kandidata iz cele indeksirane biblioteke.</p>
-  ${(d.top||[]).map(t=>`<p>${name(t)} — <b>${esc(t.match_kind)}</b> · R ${t.rhythm_score.toFixed(1)}% / T ${t.tonal_checked===false?'nije provereno':t.tonal_score.toFixed(1)+'%'} · ritam ${timecode(t.target_section.start)}–${timecode(t.target_section.end)}${t.tonal_target_section?' · tonalno '+timecode(t.tonal_target_section.start)+'–'+timecode(t.tonal_target_section.end):''}</p>`).join('') || '<p>Nema audio rezultata.</p>'}</details>`;
+  ${(d.top||[]).map(t=>`<p>${name(t)} — <b>${esc(t.match_kind)}</b> · R ${t.rhythm_score.toFixed(1)}% / motiv ${t.tonal_checked===false?'nije provereno':t.tonal_score.toFixed(1)+'%'}  · AI ${(t.neural_score||0).toFixed(1)}% · ritam ${timecode(t.target_section.start)}–${timecode(t.target_section.end)}${t.tonal_target_section?' · tonalno '+timecode(t.tonal_target_section.start)+'–'+timecode(t.tonal_target_section.end):''}</p>`).join('') || '<p>Nema audio rezultata.</p>'}</details>`;
   return `<details class="card"><summary>Zasto jeste / nije izabran AUDIO RITAM?</summary>
   <p>Prag: ${(d.threshold*100).toFixed(0)}%; kandidata posle izvornih filtera: ${d.pool}; audio uporedjeno: ${d.compared}.</p>
   ${d.current_error ? '<p>' + esc(d.current_error) + '</p>' : `<p>Trenutna pesma, audio: ${d.current_audio.bpm} BPM; periodicnost ${d.current_audio.periodicity}; stabilnost ${d.current_audio.consistency}; promenljiv tempo: ${d.current_audio.variable_tempo_suspected ? 'sumnja' : 'ne'}.</p>`}
@@ -752,7 +754,7 @@ function renderLiveAudio(data) {
   element.className = 'live-content';
   element.innerHTML = `<div class="live-context"><span>${report.engine==='chorus'?'Refren R '+report.options.rhythm_cutoff+'% / T '+report.options.tonal_cutoff+'%':'Prag '+(report.threshold ? (report.threshold*100).toFixed(0)+'%' : '?')}</span><span>isti uslovi kao 5. predlog</span><p class="sr-only">${data.current ? name(data.current) : ''}</p></div>` +
     (items.length ? '<div class="live-list">'+items.map((t,i) => `<div class="live-audio-item"><span class="live-number">${String(i+1).padStart(2,'0')}</span><div class="live-item-body"><div class="live-title" title="${esc((t.artist ? t.artist+' - ' : '')+t.title)}">${name(t)}</div>
-      <div class="live-secondary"><span>${t.match_kind ? esc(t.match_kind)+' · R '+t.rhythm_score.toFixed(0)+' / T '+(t.tonal_checked===false?'—':t.tonal_score.toFixed(0)) : t.audio.bpm+' BPM · Δ '+t.tempo_delta.toFixed(1)+'%'}</span><div class="live-actions"><button data-act="copysong" data-id="${t.id}" title="Copy Song">Copy</button><button data-act="dragsong" data-id="${t.id}">Prevuci</button><button data-act="reveal" data-id="${t.id}" title="Prikazi u Exploreru">Fajl</button></div></div></div><span class="live-score">${t.score.toFixed(1)}<small>%</small></span></div>`).join('')+'</div>' : `<div class="empty-state"><span class="mut">${esc(data.audio_status || 'Nema rezultata koji prolaze audio uslove.')}</span></div>`) +
+      <div class="live-secondary"><span>${t.match_kind ? 'AI '+(t.neural_score||0).toFixed(0)+' · R '+t.rhythm_score.toFixed(0)+' · M '+(t.tonal_checked===false?'—':t.tonal_score.toFixed(0)) : t.audio.bpm+' BPM · Δ '+t.tempo_delta.toFixed(1)+'%'}</span><div class="live-actions"><button data-act="copysong" data-id="${t.id}" title="Copy Song">Copy</button><button data-act="dragsong" data-id="${t.id}">Prevuci</button><button data-act="reveal" data-id="${t.id}" title="Prikazi u Exploreru">Fajl</button></div></div></div><span class="live-score">${t.score.toFixed(1)}<small>%</small></span></div>`).join('')+'</div>' : `<div class="empty-state"><span class="mut">${esc(data.audio_status || 'Nema rezultata koji prolaze audio uslove.')}</span></div>`) +
     (items.length && items.length<10 ? `<p class="live-note">Prolazi ${items.length} pesama; bez nasumicne dopune.</p>` : '');
 }
 

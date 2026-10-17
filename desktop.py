@@ -61,8 +61,14 @@ def main() -> None:
         from app.shortcuts import verify_hotkey_support
         assert verify_hotkey_support(), "Windows hotkey API failed"
         assert native_files.verify_drag_payload(r'C:\Music\Niš, Žurka & song.flac')
+        from app import learned_audio
+        assert learned_audio.available(), 'Trained model is missing from EXE'
+        sr=11025;t=np.arange(sr*13)/sr
+        signal=(.4*np.sin(2*np.pi*(220+40*np.sin(t))*t)+.1*np.sin(2*np.pi*80*t)*np.exp(-(t%.5)*40)).astype('float32')
+        signature=learned_audio.signatures(signal,{'start':0,'end':13})
+        assert learned_audio.similarity(signature,signature)[0]>99.9
         report = sys.argv[sys.argv.index('--build-self-test') + 1]
-        Path(report).write_text(json.dumps({'ok': True, 'native_file_drop': True, 'shortcuts_backend': True, 'frozen': bool(getattr(sys, 'frozen', False)),
+        Path(report).write_text(json.dumps({'ok': True, 'native_file_drop': True, 'shortcuts_backend': True, 'learned_model': True, 'frozen': bool(getattr(sys, 'frozen', False)),
                                            'decoder_in_bundle': str(Path(decoder).resolve()).startswith(str(Path(sys._MEIPASS).resolve()))}), encoding='utf-8')
         return
     port = int(SETTINGS["port"])
@@ -95,6 +101,15 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BaseException:
+        if '--build-self-test' in sys.argv:
+            import traceback
+            from pathlib import Path
+            error=traceback.format_exc()
+            Path(sys.argv[sys.argv.index('--build-self-test')+1]).write_text(error,encoding='utf-8')
+            raise SystemExit(1)
+        raise
 
 

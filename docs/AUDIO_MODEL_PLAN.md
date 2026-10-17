@@ -1,18 +1,18 @@
 # Audio discovery: model and validation protocol
 
-The shipped Audio8 engine is a signal-processing heuristic, not a trained neural
-network. Six user-supplied excerpts were used to develop/tune it. They are a
-regression set, not an unseen accuracy benchmark. No private audio is committed.
-At defaults R=80 / motif=80, the six-direction automatic retrieval check selected
-the intended partner for all six excerpts; other combinations failed the active
-gates in that tiny collection. This does not establish library-wide precision.
+Audio9 includes a published, pretrained Discogs-VINet ISMIR2024 neural model,
+converted to CPU ONNX. No new neural network was trained on the user's six clips.
+They remain a development/regression set, not an unseen accuracy benchmark.
+The original signal-processing rhythm/phrase checks supplement the neural index.
+No private audio or external preview audio is committed.
 
 ## Online examples collected
 
 `benchmarks/cover_validation_candidates.json` groups the public CoverHunter
 Covers80 manifest into 80 musical works / 164 listed recordings. Some groups have
-more than two entries. It contains recording labels only. Audio has not been
-downloaded and no training has been run. Example groups include A Whiter Shade
+more than two entries. It contains recording labels only. This manifest itself is metadata only. A separate local check downloaded 13
+public Apple audio previews for five complete pairs and three distractors. No
+additional neural training was run. Example groups include A Whiter Shade
 of Pale (Annie Lennox / Procol Harum), Abracadabra (Steve Miller Band / Sugar Ray),
 and Addicted to Love (Robert Palmer / Tina Turner).
 Source: https://github.com/Liu-Feng-deeplearning/CoverHunter/blob/main/data/covers80/dataset.txt
@@ -33,7 +33,7 @@ These models target versions of compositions. A shared drum groove between
 otherwise unrelated compositions is a separate objective: retain a separate
 rhythm channel and obtain explicit groove labels before claiming it is learned.
 
-## Required experiment before integration
+## Validation and future fine-tuning
 
 1. Evaluate the original pretrained checkpoint on external, unseen works. Keep all
    versions of a composition in one split. Keep the six development excerpts out

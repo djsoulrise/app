@@ -16,6 +16,13 @@ jobs:
           python-version: '3.12'
       - name: Install build dependencies
         run: python -m pip install -r requirements.txt pywebview pyinstaller
+      - name: Install CPU-only model export tools
+        run: |
+          python -m pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install onnx==1.23.2
+      - name: Export and verify the pinned pretrained model
+        run: python build_tools/export_vinet.py
       - name: Test audio analysis and persistent cache
         run: |
           python -m unittest discover -s tests -p "test_audio*.py" -v
@@ -27,6 +34,8 @@ jobs:
           python -m unittest discover -s tests -p "test_chorus.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_auto_chorus.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_learned_audio.py" -v
       - name: Test live UI and Start Stop controls
         run: |
           npm install --no-save playwright
@@ -45,7 +54,7 @@ jobs:
               env = dict(os.environ, DJ_DATA_DIR=str(pathlib.Path(folder) / 'data'))
               subprocess.run([str(pathlib.Path('dist/DJ Miljan Assistant.exe').resolve()), '--build-self-test', str(report)], env=env, check=True, timeout=180)
               result = json.loads(report.read_text(encoding='utf-8'))
-              assert result['ok'] and result['native_file_drop'] and result['shortcuts_backend'] and result['frozen'] and result['decoder_in_bundle'], result
+              assert result['ok'] and result['native_file_drop'] and result['shortcuts_backend'] and result['learned_model'] and result['frozen'] and result['decoder_in_bundle'], result
       - name: Check packaged WebView restore
         shell: python
         run: |
