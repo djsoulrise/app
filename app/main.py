@@ -1132,6 +1132,9 @@ def performance_settings(request: Request, body: dict = Body(...)):
     if 'gig_mode' in body:
         if not isinstance(body['gig_mode'],bool):raise HTTPException(400,'Gig mod mora biti ukljucen ili iskljucen.')
         SETTINGS['gig_mode']=body['gig_mode']
+        if not auto_audio.RESULT:
+            auto_audio.STATE['key']=None
+            auto_audio.REVISION+=1
         if body['gig_mode']:
             if auto_audio.STATE.get('scanning'):auto_audio.STOP.set()
             if JOB.get('kind') in ('audio','chorus_library','grid_audio','grid_meta'):JOB_STOP.set()
