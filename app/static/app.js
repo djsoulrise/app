@@ -635,7 +635,7 @@ pages.audio = async () => {
   <label><input id="chorusAuto" type="checkbox" ${o.auto_scan?'checked':''}> Automatski skeniraj trenutnu pesmu ako nije u indeksu</label>
   <p><label><input id="chorusWhole" type="checkbox" ${o.whole_library!==false?'checked':''}> Trazi audio veze u celoj biblioteci, nezavisno od key-a, tagova i zanra</label></p>
   <div class="row"><label><input id="chorusRhythm" type="checkbox" ${o.rhythm?'checked':''}> Ritam</label><input id="chorusR" type="number" min="50" max="100" value="${o.rhythm_cutoff}" style="width:80px"> %</div>
-  <p><label><input id="chorusLearned" type="checkbox" ${o.learned_model!==false?'checked':''}> Obuceni AI model za muzicke motive</label> · prag AI <input id="chorusNN" type="number" min="50" max="100" value="${o.neural_cutoff||80}" style="width:75px"> %</p>
+  <p><label><input id="chorusLearned" type="checkbox" ${o.learned_model!==false?'checked':''}> Obuceni AI model za muzicke motive</label> · prag AI <input id="chorusNN" type="number" min="50" max="100" value="${o.neural_cutoff||75}" style="width:75px"> %</p>
   <div class="row"><label><input id="chorusTonal" type="checkbox" ${o.tonal?'checked':''}> Motiv / melodijska fraza</label><input id="chorusT" type="number" min="50" max="100" value="${o.tonal_cutoff}" style="width:80px"> %</div>
   <p>Prolazi slican ritam ILI melodijski motiv; oba prolaza imaju prednost. Motiv prati promene fraze, nije isti key niti identitet glasa. Ritam se poredi posle normalizacije audio tempa; sam BPM nije dokaz poklapanja. Bez prolaza nema nasumicne audio dopune.</p>
   <button class="pri" data-act="chorussave">Sacuvaj audio uslove</button></div>
@@ -656,7 +656,7 @@ actions.chorussave=async()=>{await api('/api/audio/chorus/settings',{auto_scan:$
 function audioDiagnosticHtml(d) {
   if (!d || !d.current_id) return '';
   if (d.engine==='chorus') return `<details class="card" open><summary>Audio ritam / refren — nalaz</summary>
-  <p>${d.learned_model?.available?'Obuceni model: Discogs-VINet (offline).':'AI model nije dostupan u ovoj verziji.'} AI prag ${d.options.neural_cutoff||80}%.</p>
+  <p>${d.learned_model?.available?'Obuceni model: Discogs-VINet (offline).':'AI model nije dostupan u ovoj verziji.'} AI prag ${d.options.neural_cutoff||75}%.</p>
   <p>Ritam ${d.options.rhythm?'ukljucen':'iskljucen'} ${d.options.rhythm_cutoff}% · tonalno ${d.options.tonal?'ukljuceno':'iskljuceno'} ${d.options.tonal_cutoff}% · prolaz ILI</p>
   ${d.current_error?'<p>'+esc(d.current_error)+'</p>':''}
   ${(d.sections||[]).map(s=>`<p>Izvor ${timecode(s.start)}–${timecode(s.end)} · ${esc(s.reason)}</p>`).join('')}

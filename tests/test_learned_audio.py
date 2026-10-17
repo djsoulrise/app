@@ -26,6 +26,12 @@ class LearnedAudioTests(unittest.TestCase):
   self.assertEqual(auto.passing(hit,{**auto.DEFAULTS,'tonal':False}),(False,False))
   hit['tonal_reliable']=False;self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,False))
   hit.update(tonal_reliable=True,tonal_score=60);self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,False))
+ def test_borderline_models_need_near_best_and_generic_chords_cannot_override_model(self):
+  hit=dict(rhythm_reliable=False,rhythm_score=0,tonal_reliable=True,tonal_score=72,neural_score=78,neural_near_best=True)
+  self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,True))
+  hit['neural_near_best']=False;self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,False))
+  hit.update(tonal_score=82,neural_score=65);self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,False))
+  hit['tonal_score']=95;self.assertEqual(auto.passing(hit,auto.DEFAULTS),(False,True))
  def test_stop_and_unknown_model(self):
   stop=threading.Event();stop.set()
   with self.assertRaises(ScanCancelled):learned.tensor(np.ones(11025*13,dtype='float32'),stop_event=stop)

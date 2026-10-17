@@ -20,7 +20,7 @@ CURRENT = None
 THREAD = None
 RESULT = None
 STATE = {'phase':'Miruje', 'track_id':None, 'error':None}
-DEFAULTS = dict(rhythm=True, tonal=True, rhythm_cutoff=80, tonal_cutoff=80, auto_scan=True, whole_library=True, learned_model=True, neural_cutoff=80)
+DEFAULTS = dict(rhythm=True, tonal=True, rhythm_cutoff=80, tonal_cutoff=80, auto_scan=True, whole_library=True, learned_model=True, neural_cutoff=75)
 
 
 def settings(body=None):
@@ -215,8 +215,13 @@ def tonal_hint(a,b):
 
 def passing(item, options):
     rp=options['rhythm'] and item['rhythm_reliable'] and item['rhythm_score']>=options['rhythm_cutoff']
-    sequence=item['tonal_reliable'] and item['tonal_score']>=options['tonal_cutoff']
-    neural=options.get('learned_model',True) and item.get('neural_score',0)>=options.get('neural_cutoff',80) and item['tonal_reliable'] and item['tonal_score']>=70
+    nn=item.get('neural_score',0)
+    model_evidence=options.get('learned_model',True) and nn>0
+    # A weak model result must not be overridden by generic chord similarity.
+    sequence=item['tonal_reliable'] and item['tonal_score']>=options['tonal_cutoff'] and (not model_evidence or nn>=75 or item['tonal_score']>=90)
+    # Borderline learned similarities need near-best retrieval evidence, while
+    # stronger learned matches can admit several versions of the same work.
+    neural=model_evidence and nn>=options.get('neural_cutoff',75) and (nn>=85 or item.get('neural_near_best',True)) and item['tonal_reliable'] and item['tonal_score']>=70
     tp=options['tonal'] and (sequence or neural)
     return bool(rp),bool(tp)
 
@@ -265,7 +270,9 @@ def rank(track, source, stop_event):
                 if reliable_nn and (not hit['tonal_reliable'] or aligned_nn['tonal_score']>hit['tonal_score']):
                     hit.update(tonal_score=aligned_nn['tonal_score'],tonal_reliable=True,tonal_alignment=aligned_nn,
                                tonal_source_section={k:v for k,v in na.items() if k!='features'},tonal_target_section={k:v for k,v in nb.items() if k!='features'})
+    best_neural=max((hit['neural_score'] for hit in all_hits),default=0.)
     for hit in all_hits:
+        hit['neural_near_best']=hit['neural_score']>=best_neural-2.5
         hit.pop('_tonal_pair',None);hit.pop('_hint',None);hit.pop('_neural_pair',None)
     return all_hits
 
@@ -331,8 +338,11 @@ def fifth(current, pool, excluded_ids, diagnostics):
         if original['id'] not in ids: continue
         hit={k:v for k,v in original.items() if k!='track'};rp,tp=passing(hit,options)
         hit.update(rhythm_pass=rp,tonal_pass=tp,accepted=rp or tp,score=max(hit['rhythm_score'] if rp else 0,hit['tonal_score'] if tp else 0) if rp or tp else max(hit['rhythm_score'] if options['rhythm'] else 0,hit['tonal_score'] if options['tonal'] else 0),match_kind='R + T' if rp and tp else 'Ritam' if rp else 'Motiv' if tp else 'Ne prolazi')
-        if tp and options.get('learned_model') and hit.get('neural_score',0)>=options.get('neural_cutoff',80):
+        if tp and options.get('learned_model') and hit.get('neural_score',0)>=options.get('neural_cutoff',75):
             hit['score']=max(hit['score'],hit['neural_score']);hit['match_kind']+=' + AI'
+        hit['audio_score']=hit['score']
+        if options.get('learned_model') and options['tonal'] and hit.get('neural_score',0)>0:
+            hit['score']=round(.65*hit['score']+.35*hit['neural_score'],2)
         if not hit['accepted']: hit['reasons']=['Ne prolazi aktivne audio uslove (detaljna provera do 240 kandidata po AI potpisu i frazi).']
         hits.append(hit)
     hits.sort(key=lambda h:(h['accepted'],h['rhythm_pass'] and h['tonal_pass'],h['score'],h['rhythm_score']),reverse=True)

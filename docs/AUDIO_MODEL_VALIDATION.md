@@ -32,6 +32,23 @@ clamped to valid audio, and verifies candidates against ordered local chroma.
 All six expected pairings also passed the integrated retrieval/regression check.
 The examples helped develop the system, so this is not a held-out accuracy claim.
 
+## Four later examples and a discovered ranking fault
+
+With unchanged initial defaults, Gia / Muska lutka worked but Poznata / Loco
+missed. The ten-clip combined check initially selected expected partners in only
+7/10 directions. A legacy phrase score also outranked a stronger learned match.
+This finding prompted the final confidence/ranking change; do not describe these
+four clips as held-out after that change.
+
+The final defaults use a 75-point learned cutoff plus local phrase evidence.
+Borderline neural matches below 85 must be within 2.5 points of the query's best
+neural candidate across the full index, before exclusions. Generic phrase scores
+cannot override weak neural evidence unless the local phrase score is at least
+90. Accepted results combine audio evidence (65%) and learned similarity (35%).
+Rhythm-only mode keeps its own ordering. The repeated ten-direction check then
+ranked all five expected pairs first in both directions. Rhythm-only alternatives
+can still appear in LIVE; they are labelled separately, not asserted to be covers.
+
 ## Additional online audio actually tested
 
 Covers80 work labels came from the public CoverHunter manifest. Exact artist/title
@@ -65,3 +82,11 @@ LIVE 10 share audio eligibility, bans, played-track and identity exclusions.
 Future work: larger composition-disjoint tests and hard groove negatives before
 any further fine-tuning. Models for cover versions do not by themselves establish
 that unrelated compositions share a drum groove.
+
+## Mixed-collection regression
+
+The final integrated engine was also run with all ten supplied excerpts plus the
+13 downloaded public previews in one temporary 23-recording collection. Each
+of the ten supplied queries ranked its expected partner first. No titles or
+artist labels entered feature extraction or model inference. This remains a
+small development/regression check, not a proof of universal generalization.
