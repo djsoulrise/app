@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_submodules, collect_all
 audio_data, audio_bins, audio_imports = collect_all('imageio_ffmpeg')
 hiddenimports = ['app.main', 'app.audio_rhythm', 'app.grid_scan'] + audio_imports
 hiddenimports += collect_submodules('uvicorn')
+hiddenimports += ['app.shortcuts', 'mido.backends.rtmidi', 'rtmidi']
 
 
 a = Analysis(

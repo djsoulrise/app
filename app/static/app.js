@@ -41,8 +41,9 @@ function badges(t) {
 
 // ---------- navigation ----------
 const PAGES = [['sada', 'Sada'], ['lib', 'Biblioteka'], ['tags', 'Tagovi'], ['dupes', 'Duplikati'], ['audio', 'Audio ritam'], ['grids', 'Fleksibilni gridovi'], ['pl', 'Plejliste'],
-  ['eve', 'Vece'], ['req', 'Zahtevi'], ['ai', 'AI'], ['trend', 'Trendovi'], ['set', 'Podesavanja']];
+  ['eve', 'Vece'], ['req', 'Zahtevi'], ['ai', 'AI'], ['trend', 'Trendovi'], ['shortcuts', 'Precice'], ['set', 'Podesavanja']];
 function go(p) {
+  if (state.keyLearn || (state.page === 'shortcuts' && p !== 'shortcuts')) cancelShortcutLearn();
   if (state.mini) p = 'sada';
   document.body.classList.toggle('mini', state.mini);
   document.body.classList.toggle('tiker', state.tiker);
@@ -51,7 +52,7 @@ function go(p) {
   state.page = p; clearInterval(state.timer); state.timer = null;
   $('#nav').innerHTML = PAGES.map(([k, v]) => `<button data-act="go" data-p="${k}" class="${k === p ? 'on' : ''}">${v}</button>`).join('');
   $('#main').innerHTML = '<p class="mut">Ucitavam...</p>';
-  guard(pages[p])();
+  return guard(pages[p])();
 }
 
 async function refreshStatus() {
@@ -150,6 +151,7 @@ function renderTik(animate) {
   const c = state.tikCur, items = state.tikItems;
   if (!c) return;
   const t = items[state.tikIdx];
+  state.shortcutIndex = state.tikIdx;
   const meta = x => [x.bpm ? Math.round(x.bpm) + ' BPM' : '', x.camelot, x.energy ? 'E' + x.energy : ''].filter(Boolean).join(' \u00b7 ');
   $('#cur').innerHTML = `<div class="t-cur"><b>\u25b6</b> ${name(c)} <span>${meta(c)}</span></div>`;
   $('#sug').innerHTML = t ? `<div class="t-box" data-act="tiknext"><div class="t-n">${state.tikIdx + 1}/${items.length} \u00b7 ${t.audio_match ? 'AUDIO RITAM' : t.label === 'siguran izbor' ? 'sigurno' : 'iznenadjenje'} ${items.map((_, i) => i === state.tikIdx ? '\u25cf' : '\u25cb').join('')}</div>
@@ -163,19 +165,24 @@ async function loadSuggest(n) {
   if (state.page !== 'sada' || state.curId !== requestedId) return;
   state.lastAudioRevision = revision; state.lastAudioThreshold = threshold;
   renderLiveAudio(d);
+  const signature = JSON.stringify([requestedId, d.items.map(t => t.id)]);
+  if (signature !== state.shortcutSignature) state.shortcutIndex = 0;
+  state.shortcutSignature = signature; state.shortcutItems = d.items;
   const c = d.current, src = n ? n.source : '';
   state.audioDiagnostics = d.audio_diagnostics;
   if (state.tiker) {
     state.tikCur = c; state.tikItems = d.items; state.tikIdx = 0;
     renderTik(false);
+    highlightShortcut();
     return;
   }
   if (state.mini) {
     const meta = t => [t.bpm ? Math.round(t.bpm) + ' BPM' : '', t.camelot, t.energy ? 'E' + t.energy : ''].filter(Boolean).join(' · ');
     $('#cur').innerHTML = `<div class="m-cur">▶ ${name(c)} <span class="mut">${meta(c)}</span></div>`;
-    $('#sug').innerHTML = d.items.map((t, i) => `<div class="m-row" data-act="use" data-id="${t.id}"><b>${i + 1}.</b> ${name(t)}
+    $('#sug').innerHTML = d.items.map((t, i) => `<div class="m-row" data-shortcut-id="${t.id}" data-act="use" data-id="${t.id}"><b>${i + 1}.</b> ${name(t)}
       <span class="mut">${meta(t)} · ${t.audio_match ? 'AUDIO RITAM' : t.label === 'siguran izbor' ? 'sigurno' : 'iznenadjenje'}</span>
       <div class="m-why">${esc(t.why[0] || '')}</div><div class="row"><button class="sm" data-act="copysong" data-id="${t.id}">Copy Song</button><button class="sm" data-act="dragsong" data-id="${t.id}">Prevuci</button><button class="sm" data-act="reveal" data-id="${t.id}">Explorer</button></div></div>`).join('') || '<div class="mut">Nema predloga.</div>';
+    highlightShortcut();
     return;
   }
   const notes = [];
@@ -185,7 +192,8 @@ async function loadSuggest(n) {
   $('#cur').innerHTML = `<div class="card cur"><div class="mut small">TRENUTNA (${esc(src || '')}) &middot; stil: ${esc(c.style_label)}</div>
     <div class="big">${name(c)}</div>${badges(c)}</div>`;
   $('#sug').innerHTML = audioDiagnosticHtml(d.audio_diagnostics) + (notes.length ? `<div class="small mut">${notes.join('<br>')}</div>` : '') + '<h3>Sledecih 5</h3><div class="grid">' + d.items.map(t => `
-    <div class="card">
+    <div class="card" data-shortcut-id="${t.id}">
+      <button class="sm" data-act="shortcutselect" data-id="${t.id}">Izaberi za precice</button>
       <div><span class="badge ${t.label === 'siguran izbor' ? 'ok' : 'acc'}">${t.label}</span><b style="float:right">${t.score}</b></div>
       <div class="big" style="font-size:20px">${name(t)}</div>${badges(t)}
       <div class="bar"><i style="width:${Math.min(100, t.score)}%"></i></div>
@@ -196,6 +204,7 @@ async function loadSuggest(n) {
       <button class="sm" data-act="dragsong" data-id="${t.id}">Prevuci u Traktor</button>
       <button class="sm" data-act="reveal" data-id="${t.id}">Explorer</button></div></div>`).join('') + '</div>' +
     (d.items.length ? '' : '<p class="mut">Nema predloga. Ucitaj biblioteku u Podesavanjima.</p>');
+  highlightShortcut();
 }
 
 // --- Biblioteka ---
@@ -690,3 +699,150 @@ function renderLiveAudio(data) {
 document.addEventListener('input', e => {
   if (e.target.id === 'gridQuery') renderGridResults(e.target.value);
 });
+
+
+// ---------- Learnable native shortcuts ----------
+function midiBindingText(b) {
+  if (!b) return 'Nije dodeljeno';
+  const token = t => `${t[0] === 'note' ? 'Note' : 'CC'} ${t[2]} / kanal ${t[1]+1}`;
+  return (b.modifier ? token(b.modifier)+' + ' : '')+token(b.button);
+}
+function highlightShortcut() {
+  const t = (state.shortcutItems || [])[state.shortcutIndex || 0];
+  $$('[data-shortcut-id]').forEach(el => el.classList.toggle('shortcut-selected', !!t && +el.dataset.shortcutId === t.id));
+}
+function cancelShortcutLearn() {
+  state.keyLearn = null; clearTimeout(state.keyLearnTimer);
+  return api('/api/shortcuts/learn/cancel', {}).catch(() => {});
+}
+function shortcutStatusText(d) {
+  const l = d.learning;
+  const prompt = l ? (l.combination ? (l.modifier ? 'Drzi prvo dugme i pritisni drugo.' : 'Pritisni i drzi Shift/DEL, zatim drugo dugme.') : 'Pritisni zeljeno dugme.') : '';
+  if ($('#shortcutStatus')) $('#shortcutStatus').textContent = [state.keyLearn ? 'Pritisni kombinaciju na tastaturi. Esc = otkazi.' : prompt,
+    d.connected ? 'MIDI povezan.' : 'MIDI nije povezan.', d.last_midi ? 'Poslednji signal: '+d.last_midi : '',
+    d.learning_error, d.midi_error, d.keyboard_error].filter(Boolean).join(' ');
+  Object.keys(d.actions || {}).forEach(a => {
+    const key = document.getElementById('key_'+a), midi = document.getElementById('midi_'+a);
+    if (key) key.textContent = d.settings.keyboard[a]?.label || 'Nije dodeljeno';
+    if (midi) midi.textContent = midiBindingText(d.settings.midi[a]);
+  });
+}
+pages.shortcuts = async () => {
+  const d = await api('/api/shortcuts');
+  $('#main').innerHTML = `<h2>Precice — tastatura i kontroler</h2>
+  <p>Svaka radnja ima odvojeno ucenje. Tastatura radi dok je aktivan Traktor ili Assistant, osim pri kucanju u Assistantu. Postavke se cuvaju automatski.</p>
+  <div class="card"><label><input type="checkbox" id="keyboardEnabled" ${d.settings.keyboard_enabled ? 'checked' : ''}> Tastaturne precice ukljucene</label>
+  <div class="row"><select id="midiPort"><option value="">Izaberi MIDI ulaz</option></select>
+  <button data-act="shortcutports">Osvezi MIDI ulaze</button><button data-act="shortcutconnect">Povezi MIDI</button><button data-act="shortcutdisconnect">Iskljuci MIDI</button></div>
+  <p id="shortcutStatus" role="status"></p><button data-act="shortcutcancel">Otkazi ucenje</button></div>
+  <div class="scroll"><table><thead><tr><th>Radnja</th><th>Tastatura</th><th>Kontroler</th></tr></thead><tbody>
+  ${Object.entries(d.actions).map(([a,label]) => `<tr><td>${esc(label)}</td><td><b id="key_${a}"></b><div class="row">
+  <button data-act="shortcutkey" data-action="${a}">Nauci tastaturu</button><button data-act="shortcutkeyclear" data-action="${a}">Obrisi</button></div></td>
+  <td><b id="midi_${a}"></b><div><label><input type="checkbox" id="combo_${a}" checked> Shift/DEL + drugo dugme</label></div><div class="row">
+  <button data-act="shortcutmidi" data-action="${a}">Nauci kontroler</button><button data-act="shortcutmidiclear" data-action="${a}">Obrisi</button></div></td></tr>`).join('')}
+  </tbody></table></div>
+  <p class="mut">Sledeci/prethodni predlog menja samo oznaceni izbor. Copy Song kopira fajl. Prevuci otvara prozor za rucno prevlacenje. Ove radnje ne salju Load, Play ni druge komande Traktoru.</p>
+  <details class="card"><summary>Povezivanje sa Traktorom i CMD Studio 4A</summary>
+  <ol><li>Za povezivanje dok Traktor koristi kontroler napravi virtuelni port <b>DJ Assistant</b> u <a href="https://www.tobias-erichsen.de/software/loopmidi.html" target="_blank" rel="noopener">loopMIDI</a> (posebna jednokratna instalacija). Pokreni ga pre povezivanja.</li>
+  <li>U Traktor Controller Manager dodaj jos jedan <b>Generic MIDI</b> device. Originalni CMD mapping ostavi sacuvan. Za novi device stavi In-Port na CMD Studio 4A, Out-Port na DJ Assistant. Izbegni All Ports.</li>
+  <li>Dodaj <b>Add In → Modifier #1</b>, Type Button, Interaction Hold, Set to value 1. Learn pritisni na DEL/Shift dugmetu. Dodaj <b>Add Out → Modifier #1</b>, rucno dodeli kanal 16 / CC 110, Controller Range 0–1, MIDI Range 0–127, Blend iskljucen.</li>
+  <li>Za drugo dugme ponovi sa Modifier #2 i izlazom kanal 16 / CC 111. Za dodatna dugmad koristi Modifier #3–#8 i CC 112–117. Svaki ulaz je Hold, vrednost 1; izlaz mora poslati i 0 kada pustis dugme. Ne stavljaj M1 uslov na te izlaze — Assistant sam prepoznaje kombinaciju.</li>
+  <li>Ovde osvezi ulaze, izaberi DJ Assistant i Povezi MIDI. Klikni Nauci kontroler, pritisni i drzi DEL/Shift, pritisni drugo dugme, pa pusti oba. Za jedno dugme iskljuci oznaku kombinacije pre ucenja.</li></ol>
+  <p>Dodatni mapping ne uklanja postojece komande tih dugmica. Izaberi neiskoriscene tastere/kombinacije i proveri originalni mapping pre nastupa. Ako isti taster bez Shift-a vec ima komandu u Traktoru, nju moras usloviti ili iskljuciti u Traktoru. Ovo nije automatski menjanje tvog TSI mappinga.</p>
+  <p>Ako MIDI ulaz podrzava vise programa, mozes ga izabrati direktno. Ako je zauzet, koristi opisani virtuelni port. Assistant samo prima MIDI; ne prosledjuje niti salje komande na kontroler.</p></details>`;
+  shortcutStatusText(d);
+  $('#keyboardEnabled').onchange = guard(async e => { await api('/api/shortcuts/keyboard/enabled', {enabled:e.target.checked}); });
+  await actions.shortcutports(null, d.settings.midi_input);
+  state.timer = setInterval(async () => {
+    try { const result = await api('/api/shortcuts'); if (state.page === 'shortcuts') shortcutStatusText(result); } catch {}
+  }, 500);
+};
+actions.shortcutports = async (el, saved) => {
+  const select = $('#midiPort'); if (!select) return;
+  const name = saved || select.value;
+  try {
+    const d = await api('/api/shortcuts/ports');
+    const ports = [...new Set([...(d.ports || []), ...(name ? [name] : [])])];
+    select.innerHTML = '<option value="">Izaberi MIDI ulaz</option>'+ports.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
+    select.value = name || '';
+  } catch (e) { toast(e.message, true); }
+};
+actions.shortcutconnect = async () => { shortcutStatusText(await api('/api/shortcuts/midi/connect', {name:$('#midiPort').value, enabled:true})); };
+actions.shortcutdisconnect = async () => { shortcutStatusText(await api('/api/shortcuts/midi/connect', {name:$('#midiPort').value, enabled:false})); };
+actions.shortcutkey = async el => {
+  await cancelShortcutLearn();
+  await api('/api/shortcuts/keyboard-learning', {enabled:true});
+  state.keyLearn = el.dataset.action;
+  toast('Pritisni novu kombinaciju tastature. Esc otkazuje.');
+  state.keyLearnTimer = setTimeout(() => { cancelShortcutLearn(); toast('Ucenje je isteklo. Pokreni ponovo.'); }, 29000);
+};
+actions.shortcutkeyclear = async el => { shortcutStatusText(await api('/api/shortcuts/keyboard', {action:el.dataset.action, binding:null})); };
+actions.shortcutmidi = async el => {
+  await cancelShortcutLearn();
+  shortcutStatusText(await api('/api/shortcuts/midi/learn', {action:el.dataset.action, combination:$('#combo_'+el.dataset.action).checked}));
+};
+actions.shortcutmidiclear = async el => { shortcutStatusText(await api('/api/shortcuts/midi/clear', {action:el.dataset.action})); };
+actions.shortcutcancel = async () => { await cancelShortcutLearn(); toast('Ucenje otkazano'); };
+actions.shortcutselect = el => {
+  const index = (state.shortcutItems || []).findIndex(t => t.id === +el.dataset.id);
+  if (index >= 0) { state.shortcutIndex = index; highlightShortcut(); }
+};
+document.addEventListener('keydown', e => {
+  if (!state.keyLearn) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (e.key === 'Escape') { cancelShortcutLearn(); toast('Ucenje otkazano'); return; }
+  if (e.repeat || [16,17,18,91,92].includes(e.keyCode)) return;
+  const action = state.keyLearn;
+  state.keyLearn = null; clearTimeout(state.keyLearnTimer);
+  const label = [e.ctrlKey ? 'Ctrl' : '',e.altKey ? 'Alt' : '',e.shiftKey ? 'Shift' : '',e.metaKey ? 'Win' : '', e.key.length===1 ? e.key.toUpperCase() : e.key].filter(Boolean).join('+');
+  guard(async () => {
+    try {
+      shortcutStatusText(await api('/api/shortcuts/keyboard', {action, binding:{vk:e.keyCode,modifiers:(e.altKey?1:0)|(e.ctrlKey?2:0)|(e.shiftKey?4:0)|(e.metaKey?8:0),label}}));
+      toast('Sacuvano: '+label);
+    } finally { await api('/api/shortcuts/keyboard-learning', {enabled:false}); }
+  })();
+}, true);
+let shortcutEditing = false;
+function syncShortcutEditing() {
+  const editing = !!document.activeElement?.matches('input,textarea,select,[contenteditable="true"]');
+  if (editing !== shortcutEditing) { shortcutEditing = editing; api('/api/shortcuts/editing', {editing}).catch(() => {}); }
+}
+document.addEventListener('focusin', syncShortcutEditing);
+document.addEventListener('focusout', () => setTimeout(syncShortcutEditing, 0));
+async function runShortcut(action) {
+  if (action === 'toggle_view') { await actions.mini(); return; }
+  if (action === 'focus_search') {
+    state.view='full'; state.mini=false; state.tiker=false; localStorage.setItem('view','full');
+    await go('sada'); $('#q')?.focus(); return;
+  }
+  if (state.page !== 'sada') await go('sada');
+  const items = state.shortcutItems || [];
+  if (!state.curId || !items.length) { toast('Nema trenutnih predloga.',true); return; }
+  let index = state.shortcutIndex || 0;
+  if (action === 'next_suggestion' || action === 'previous_suggestion') {
+    index = (index + (action === 'next_suggestion' ? 1 : -1) + items.length) % items.length;
+    state.shortcutIndex = index;
+    if (state.tiker) { state.tikIdx = index; renderTik(false); }
+    highlightShortcut(); document.querySelector(`[data-shortcut-id="${items[index].id}"]`)?.scrollIntoView({block:'nearest'});
+    toast('Izabrano: '+items[index].artist+' - '+items[index].title); return;
+  }
+  const el = {dataset:{id:items[index].id}};
+  if (action === 'copy_song') await actions.copysong(el);
+  if (action === 'drag_song') await actions.dragsong(el);
+}
+(async () => {
+  try {
+    const d = await api('/api/shortcuts');
+    let after = d.sequence || 0, busy = false;
+    setInterval(async () => {
+      if (busy) return; busy = true;
+      try {
+        const d = await api('/api/shortcuts/events?after='+after);
+        for (const event of d.events || []) {
+          after = Math.max(after,event.sequence);
+          await guard(runShortcut)(event.action);
+        }
+      } catch {} finally { busy = false; }
+    },250);
+  } catch {} // Guest/tablet clients cannot use native shortcuts.
+})();

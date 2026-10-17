@@ -63,3 +63,6 @@ body.tiker #sug{flex:1;display:flex;min-height:0}
 @keyframes tikIn{from{opacity:0;transform:translateY(45%)}to{opacity:1;transform:none}}
 
 .evening-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,1fr);gap:16px;align-items:start}.live-audio-item{padding:12px 0;border-bottom:1px solid #333}.live-audio-item:last-child{border-bottom:0}.live-audio-item .row{margin-top:8px}@media(max-width:950px){.evening-layout{grid-template-columns:1fr}}
+
+.shortcut-selected { outline: 3px solid var(--acc); outline-offset: -3px; }
+#shortcutStatus { min-height: 3em; overflow-wrap: anywhere; }

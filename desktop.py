@@ -38,9 +38,12 @@ def main() -> None:
         assert (Path(STATIC) / 'index.html').is_file()
         audio_rhythm.init()
         from app import native_files
+        import mido.backends.rtmidi, rtmidi
+        from app.shortcuts import verify_hotkey_support
+        assert verify_hotkey_support(), "Windows hotkey API failed"
         assert native_files.verify_drag_payload(r'C:\Music\Niš, Žurka & song.flac')
         report = sys.argv[sys.argv.index('--build-self-test') + 1]
-        Path(report).write_text(json.dumps({'ok': True, 'native_file_drop': True, 'frozen': bool(getattr(sys, 'frozen', False)),
+        Path(report).write_text(json.dumps({'ok': True, 'native_file_drop': True, 'shortcuts_backend': True, 'frozen': bool(getattr(sys, 'frozen', False)),
                                            'decoder_in_bundle': str(Path(decoder).resolve()).startswith(str(Path(sys._MEIPASS).resolve()))}), encoding='utf-8')
         return
     port = int(SETTINGS["port"])
@@ -59,9 +62,14 @@ def main() -> None:
     if not _wait_port(port):
         print(f"Server nije pokrenut (port {port} je mozda zauzet).")
         sys.exit(1)
-    webview.create_window("DJ asistent — Audio 4", f"http://127.0.0.1:{port}", width=1400, height=900, min_size=(900, 600))
-    webview.start()
-    server.should_exit = True
+    title = "DJ asistent — Audio 5"
+    from app.shortcuts import manager, WindowsWindow
+    webview.create_window(title, f"http://127.0.0.1:{port}", width=1400, height=900, min_size=(900, 600))
+    try:
+        webview.start(lambda: manager.start(WindowsWindow(title)))
+    finally:
+        manager.stop()
+        server.should_exit = True
 
 
 if __name__ == "__main__":

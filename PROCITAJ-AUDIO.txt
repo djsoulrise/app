@@ -1,3 +1,17 @@
+AUDIO 5 — PRECICE
+
+Nova kartica Precice: posebno Nauci tastaturu / Nauci kontroler za svaku radnju.
+Ctrl+X je pocetna precica za prikaz/minimizaciju i moze se promeniti ili obrisati.
+Tastaturne precice aktivne su u Traktoru i Assistantu, osim pri kucanju u Assistantu.
+MIDI: jedno dugme ili drzi Shift/DEL + drugo dugme. Posle ucenja pusti oba.
+Podesavanja se cuvaju automatski. Tokom ucenja se radnje ne izvrsavaju.
+Uputstvo za virtuelni MIDI port i dodatni Traktor mapping je u kartici Precice.
+loopMIDI je zasebna jednokratna instalacija ako je fizicki port zauzet u Traktoru.
+Ne menjamo originalni Traktor TSI i ne saljemo Load/Play komande.
+Direktno ucitavanje tacnog fajla u deck A/B jos nije podrzano. Prevuci je rucni file drop.
+Ne treba novi audio sken. Baza i algoritam preporuka su isti.
+Zatvori prethodni Assistant pre pokretanja novog EXE-a.
+
 DJ ASSISTANT — ORIGINAL MASTER + AUDIO RITAM / GRIDOVI
 
 POKRETANJE (Windows)

@@ -1,3 +1,4 @@
+import time
 import json
 import os
 import socket
@@ -14,7 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
+from . import shortcuts, native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
 from .config import DATA, SETTINGS
 from .scan_control import ScanCancelled
 from .keys import key_score
@@ -906,3 +907,62 @@ def save_audio_threshold(body: dict = Body(...)):
 @app.post('/api/grids/audio-search')
 def audio_grid_search():
     return start_job('Audio pretraga promenljivog tempa', lambda: grid_scan.audio_search(_progress, JOB_STOP), kind='grid_audio', cancellable=True)
+
+
+# Native shortcuts are only configurable from this computer, never from guest/tablet clients.
+def _shortcut_local(request):
+    if not _local(request):
+        raise HTTPException(403, "Precice su dostupne samo na DJ racunaru.")
+
+
+@app.get('/api/shortcuts')
+def shortcut_status(request: Request):
+    _shortcut_local(request)
+    return shortcuts.manager.status()
+
+
+@app.get('/api/shortcuts/ports')
+def shortcut_ports(request: Request):
+    _shortcut_local(request)
+    try:
+        return {'ports': shortcuts.manager.ports()}
+    except Exception as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get('/api/shortcuts/events')
+def shortcut_events(request: Request, after: int = 0):
+    _shortcut_local(request)
+    return {'events': shortcuts.manager.queued(after)}
+
+
+@app.post('/api/shortcuts/{operation:path}')
+def shortcut_change(operation: str, request: Request, body: dict = Body(...)):
+    _shortcut_local(request)
+    m = shortcuts.manager
+    try:
+        if operation == 'midi/connect':
+            m.connect_midi(str(body.get('name') or ''), bool(body.get('enabled')))
+        elif operation == 'midi/learn':
+            m.learn_midi(body.get('action'), body.get('combination', True))
+        elif operation == 'midi/clear':
+            m.clear_midi(body.get('action'))
+        else:
+            with m.lock:
+                if operation == 'keyboard':
+                    m.bind_keyboard(body.get('action'), body.get('binding'))
+                elif operation == 'keyboard/enabled':
+                    m.settings['keyboard_enabled'] = bool(body.get('enabled'))
+                    m.persist()
+                elif operation == 'keyboard-learning':
+                    m.keyboard_learning_until = time.monotonic()+30 if body.get('enabled') else 0
+                elif operation == 'editing':
+                    m.editing = bool(body.get('editing'))
+                elif operation == 'learn/cancel':
+                    m.learning = None
+                    m.keyboard_learning_until = 0
+                else:
+                    raise ValueError('Nepoznata opcija precice.')
+        return m.status()
+    except (ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(400, str(exc))

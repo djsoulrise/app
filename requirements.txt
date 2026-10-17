@@ -8,3 +8,6 @@ pytest
 numpy
 scipy
 imageio-ffmpeg
+
+mido
+python-rtmidi
