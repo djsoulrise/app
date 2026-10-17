@@ -5,7 +5,7 @@ from app import config,db,auto_audio,audio_rhythm,learned_audio,audio_cache_tran
 
 class TransferTests(unittest.TestCase):
  def setUp(self):
-  self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.c=sqlite3.connect(':memory:',check_same_thread=False);self.c.row_factory=sqlite3.Row
+  self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name).resolve();self.c=sqlite3.connect(':memory:',check_same_thread=False);self.c.row_factory=sqlite3.Row
   self.patches=[patch.object(db,'conn',return_value=self.c),patch.object(config,'DATA',self.root),patch.object(db,'DB_FILE',self.root/'library.db')]
   for p in self.patches:p.start()
   db.init();m.init();self.file=self.root/'PC'/'song.mp3';self.file.parent.mkdir();self.file.write_bytes(b'exact file content')
