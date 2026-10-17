@@ -3,7 +3,7 @@ const fs=require('fs');
 const {chromium}=require('playwright');
 (async()=>{
  const browser=await chromium.launch({channel:'msedge',headless:true});
- const page=await browser.newPage({viewport:{width:1100,height:740}});
+ const page=await browser.newPage({viewport:{width:1100,height:680}});
  let current=1,saved=.97,job={running:false},starts=[],stops=[];
  let shortcuts={actions:{toggle_window:'Prikazi / minimizuj Assistant',focus_search:'Fokus na pretragu',next_suggestion:'Sledeci predlog',copy_song:'Copy Song'},settings:{keyboard_enabled:true,keyboard:{toggle_window:{vk:88,modifiers:2,label:'Ctrl+X'}},midi:{}},sequence:0,connected:false};
  let midiLearns=[],events=[],fileCopies=[];
@@ -56,7 +56,7 @@ const {chromium}=require('playwright');
   await page.screenshot({path:'ui-console-'+width+'x'+height+'.png'});
   if(result.rows!==5||result.live!==10||!result.visible||!result.equal||!result.side||!result.noScroll||!result.hidden||result.overflow)throw Error('Compact console '+width+'x'+height+': '+JSON.stringify(result));
  }
- await checkConsole(1100,740);await checkConsole(940,610);await page.setViewportSize({width:1100,height:740});
+ await checkConsole(1100,680);await checkConsole(940,610);await page.setViewportSize({width:1100,height:680});
  await page.locator('[data-act="consoledetails"]').click();
  await page.locator('#modal:not(.hidden)').waitFor();
  await page.locator('[data-act="closemodal"]').click();
@@ -95,6 +95,6 @@ const {chromium}=require('playwright');
  await new Promise(resolve=>setTimeout(resolve,600));
  if(fileCopies.join(',')!=='4')throw Error('Copy must target selected suggestion exactly once: '+fileCopies);
  if(errors.length)throw Error(errors.join('\n'));
- console.log('UI PASS: compact console 5+10 without scroll at 1100x740 and 940x610, menu, Start/Stop, keyboard+MIDI learn, selected file shortcuts');
+ console.log('UI PASS: compact console 5+10 without scroll at 1100x680 and 940x610, menu, Start/Stop, keyboard+MIDI learn, selected file shortcuts');
  await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});

@@ -5,7 +5,7 @@ Pri kucanju u poljima Assistanta precice miruju (Ctrl+X tada ostaje isecanje tek
 Ostale tastaturne precice i dalje rade u Assistantu i Traktoru.
 Pet predloga levo, LIVE deset audio rezultata desno, jednake visine.
 Opcije su pod zupcanikom, istorija i detalji se otvaraju na klik.
-Pocetni prozor 1100 x 780; minimalno 940 x 650.
+Pocetni prozor do 1100 x 720, automatski ogranicen dostupnim ekranom; minimalno do 940 x 650.
 Postojeci sken i algoritam preporuka nisu promenjeni.
 
 AUDIO 5 — PRECICE

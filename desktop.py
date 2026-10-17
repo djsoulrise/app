@@ -22,6 +22,21 @@ def _wait_port(port: int, timeout: float = 15) -> bool:
     return False
 
 
+def _window_bounds():
+    """Keep the first window inside the desktop work area, including on 1366x768."""
+    width, height = 1100, 720
+    try:
+        import ctypes
+        from ctypes import wintypes
+        area = wintypes.RECT()
+        if ctypes.windll.user32.SystemParametersInfoW(0x30, 0, ctypes.byref(area), 0):
+            width = min(width, max(600, area.right-area.left-24))
+            height = min(height, max(480, area.bottom-area.top-24))
+    except (AttributeError, OSError):
+        pass
+    return width, height, (min(940, width), min(650, height))
+
+
 def main() -> None:
     if '--build-self-test' in sys.argv:
         import json
@@ -64,7 +79,8 @@ def main() -> None:
         sys.exit(1)
     title = "DJ asistent — Audio 6"
     from app.shortcuts import manager, WindowsWindow
-    webview.create_window(title, f"http://127.0.0.1:{port}", width=1100, height=780, min_size=(940, 650))
+    width, height, minimum = _window_bounds()
+    webview.create_window(title, f"http://127.0.0.1:{port}", width=width, height=height, min_size=minimum)
     try:
         webview.start(lambda: manager.start(WindowsWindow(title)))
     finally:
