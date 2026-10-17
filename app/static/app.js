@@ -155,7 +155,7 @@ pages.sada = async () => {
     <div id="res"></div>
     <div class="console-layout"><section class="suggestions-panel"><div class="panel-heading"><h3>Sledecih <b>5</b></h3><span>SELEKCIJA / MIX</span></div><div id="sug"></div></section>
     <aside class="live-panel"><div class="panel-heading"><h3><i class="live-dot"></i> LIVE <b>3 + 6</b></h3><span>AUDIO / ISTORIJA</span></div><div id="liveaudio">Cekam trenutnu pesmu...</div></aside></div>
-    <div class="console-footer"><button data-act="togglegig">Gig mod <b id="gigLabel">${state.status?.gig_mode?'ON':'OFF'}</b></button><button data-act="consolehistory">Veceras pusteno <span class="mut">/ istorija</span></button><button data-act="consoledetails">Detalji preporuka <span class="mut">/ audio uslovi</span></button></div><div id="played" class="hidden"></div><div id="suggestionDiagnostics" class="hidden"></div>`;
+    <div class="console-footer"><button data-act="consolehistory">Veceras pusteno <span class="mut">/ istorija</span></button><button data-act="consoledetails">Detalji preporuka <span class="mut">/ audio uslovi</span></button></div><div id="played" class="hidden"></div><div id="suggestionDiagnostics" class="hidden"></div>`;
   drawModes(); state._drawModes = drawModes;
   $('#q').addEventListener('input', guard(async e => {
     const q = e.target.value.trim();

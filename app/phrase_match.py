@@ -121,7 +121,7 @@ def align(a, b, stop_event=None):
             'a_start':float(round(i/HZ,2)),'b_start':float(round(j/HZ,2)),'shift':int(shift)}
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=8)
 def query_fft(packed,width,n):
     import numpy as np
     from scipy.fft import fft2
@@ -148,6 +148,16 @@ def screen(a,b,stop_event=None):
             n=next_fast_len(len(target)+width)
             target_fft=fft2(target,s=(n,12))
             if len(target)<width:continue
+            if len(starts)*n*12*8>8*1024*1024:
+                # Long mixes keep the original bounded, one-window path.
+                for start in starts:
+                    check_stop(stop_event)
+                    part=aa[start:start+width]
+                    corr=ifft2(np.conj(fft2(part,s=(n,12)))*target_fft).real[:len(target)-width+1]
+                    j,shift=np.unravel_index(np.argmax(corr),corr.shape)
+                    score=float(corr[j,shift])/max(1,width)
+                    if score>best['score']:best={'score':score,'a_start':start/HZ,'b_start':j*scale/HZ,'scale':scale}
+                continue
             offsets,query=query_fft(a[band],width,n)
             # Four windows per batch bound scratch memory for long mixes.
             for base in range(0,len(offsets),4):

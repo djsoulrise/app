@@ -39,6 +39,9 @@ class AudioCacheTests(unittest.TestCase):
                     self.assertEqual(audio_rhythm.scan()['cached'], 3)
                 current = {'id': 1, 'path': paths[0]}
                 candidates = [{'id': i, 'path': paths[i-1]} for i in (2,3)]
+                from app import auto_audio
+                _,worker_result=auto_audio.rank_worker(current,None,auto_audio.settings())
+                self.assertEqual({r['track']['id'] for r in worker_result[0]},{2,3})
                 def prepare():
                     measured,report=audio_rhythm.rank_audio(current,candidates)
                     audio_rhythm.PREPARED={'track_id':1,'revision':audio_rhythm.SCAN_REVISION,'whole':(measured,report),'source_stamp':(os.stat(paths[0]).st_size,os.stat(paths[0]).st_mtime_ns)}

@@ -442,7 +442,7 @@ def rank_worker(track,source,options):
     try:
         hits=rank(track,source,performance.STOP) if source else []
         check_stop(performance.STOP)
-        targets=db.rows('SELECT * FROM tracks WHERE on_disk=1')
+        targets=db.rows('SELECT * FROM tracks')
         measured,report=audio_rhythm.rank_audio(track,targets)
         return hits,(measured,report)
     finally:db.conn().close();db._local.c=None
