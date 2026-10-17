@@ -170,3 +170,14 @@ control54.248), preserving the other verified pairs. Large-library precision
 is not established. Periodic signatures use cache version4; a full rescan is
 required. Whole-track rhythm cache remains reusable. The library Start/Stop
 and default OFF live-scan switch remain independent.
+
+## Traktor-only context correction
+
+PRE/POSLE now includes every imported Traktor collection playlist and History
+archive (src_playlists.source = traktor/history), regardless of use_learn. The
+original learning toggle and left-side scoring remain untouched. Assistant
+plays/events are no longer consulted by this context panel. Labels explicitly
+say Traktor lists, and counts describe list order rather than verified plays.
+Existing Audio11 signatures remain valid; this correction requires no audio
+rescan. Import the laptop's collection.nml and its History directory to refresh
+list membership. Old-path archives remain an exact-path import limitation.

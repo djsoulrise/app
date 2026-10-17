@@ -738,13 +738,13 @@ function renderLiveAudio(data) {
   const actions=t=>`<div class="live-actions"><button data-act="copysong" data-id="${t.id}" title="Copy Song">Copy</button><button data-act="dragsong" data-id="${t.id}">Prevuci</button><button data-act="reveal" data-id="${t.id}">Fajl</button></div>`;
   const row=(t,i,kind)=>{
     if(!t)return `<div class="live-audio-item live-empty"><span class="live-number">${i+1}</span><span class="mut">${kind==='audio'?'Nema potvrdjenog audio rezultata':'Nema dovoljno podataka u listama'}</span></div>`;
-    const detail=kind==='audio'?(t.phrase_verification? (t.phrase_verification.kind==='periodic'?'AI fraza · TEST':t.phrase_verification.seconds.toFixed(1)+'s zajednicke muzike'):t.match_kind||'Audio ritam'):`${t.times}× u ${t.lists} lista / veceri`;
+    const detail=kind==='audio'?(t.phrase_verification? (t.phrase_verification.kind==='periodic'?'AI fraza · TEST':t.phrase_verification.seconds.toFixed(1)+'s zajednicke muzike'):t.match_kind||'Audio ritam'):`${t.times}× u ${t.lists} Traktor lista`;
     const score=kind==='audio'?t.score.toFixed(1):t.times+'×';
     const tip=kind==='audio'?detail:(t.sources||[]).join(' · ');
     return `<div class="live-audio-item ${kind==='audio'?'audio-match':'history-match'}" data-history-side="${kind}"><span class="live-number">${i+1}</span><div class="live-item-body"><div class="live-title" title="${esc((t.artist?t.artist+' - ':'')+t.title)}">${name(t)}</div><div class="live-secondary"><span title="${esc(tip)}">${esc(detail)}</span>${actions(t)}</div></div><span class="live-score">${esc(score)}</span></div>`;
   };
   const group=(label,items,kind)=>`<section class="live-group" data-live-group="${kind}"><h4>${label}</h4><div class="live-group-rows">${Array.from({length:3},(_,i)=>row(items[i],i,kind)).join('')}</div></section>`;
-  element.innerHTML=`<div class="live-context"><span>3 audio · 3 PRE · 3 POSLE</span><span>${report.complete===false?'audio provera u toku':'za trenutnu pesmu'}</span><p class="sr-only">${data.current?name(data.current):''}</p></div><div class="live-list live-context-list">${group('AUDIO — ZAJEDNICKA MUZIKA',audio,'audio')}${group('PRE — TVOJA ISTORIJA',history.before||[],'before')}${group('POSLE — TVOJA ISTORIJA',history.after||[],'after')}</div>`;
+  element.innerHTML=`<div class="live-context"><span>3 audio · 3 PRE · 3 POSLE</span><span>${report.complete===false?'audio provera u toku':'za trenutnu pesmu'}</span><p class="sr-only">${data.current?name(data.current):''}</p></div><div class="live-list live-context-list">${group('AUDIO — ZAJEDNICKA MUZIKA',audio,'audio')}${group('PRE — TRAKTOR LISTE',history.before||[],'before')}${group('POSLE — TRAKTOR LISTE',history.after||[],'after')}</div>`;
 }
 
 document.addEventListener('input', e => {
