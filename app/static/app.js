@@ -320,6 +320,7 @@ pages.pl = async () => {
   $('#main').innerHTML = `<h2>Plejliste</h2><p class="mut">Plejliste zive u aplikaciji. Izvoz je M3U8 fajl koji mozes da uvezes/prevucices u Traktor; kolekcija se ne menja.</p>
     <div class="row">${pls.map(p => `<button class="tab" data-act="plopen" data-id="${p.id}">${esc(p.name)}</button>`).join('')}<button class="pri" data-act="plnew">+ Nova pravilna</button></div>
     <div id="plbody"></div>
+    <div class="row"><button class="pri" data-act="learningpick">Uvezi liste za dodatno ucenje</button><input id="learningFiles" type="file" accept=".nml,.m3u,.m3u8" multiple hidden></div><p class="mut small">NML, M3U i M3U8. Oznacene dodatne liste koriste se za ucenje i PRE/POSLE. Neprepoznate i nejednoznacne pesme se prijavljuju.</p><div id="learningReport"></div>
     <h3>Moje liste iz kojih aplikacija uci (${src.filter(s => s.use_learn).length}/${src.length})</h3>
     <div class="card" style="max-height:320px;overflow:auto">${src.map(s => `<div class="row"><input type="checkbox" data-act="learn" data-id="${s.id}" ${s.use_learn ? 'checked' : ''}> ${esc(s.name)} <span class="mut small">(${s.n}, ${esc(s.source)})</span></div>`).join('')}</div>`;
 };
@@ -614,6 +615,12 @@ pages.audio = async () => {
   $('#main').innerHTML = `<h2>Audio ritam — ista ili slicna muzika</h2>
   <p>Indeks muzickih fraza: <b>${s.counts.ok || 0}</b> pesama; greske: ${s.counts.error || 0}. Ova verzija proverava muzicke fraze kroz celu pesmu. Za nove osobine pokreni Start; stari ritam ostaje sacuvan. Model je ukljucen u EXE i radi offline.</p>
   <div class="card"><h3>Skeniraj celu biblioteku</h3>${scanButtons('chorus_library')}<p>Start nastavlja od novih ili promenjenih pesama. Stop cuva zavrsene rezultate. Traktor kolekcija i audio fajlovi se samo citaju.</p></div>
+  <div class="card"><h3>Audio baza — prenos PC / laptop</h3><p id="audioDbPath" class="small mut"></p>
+  <div class="row"><button data-act="cacheexport">Izvezi audio bazu</button><button data-act="cachepick">Uvezi audio bazu</button><button data-act="cachecheck">Proveri skenirano (bez skena)</button></div>
+  <p class="small mut">Prenose se potpisi, bez muzike. Isti fajl se povezuje SHA256 proverom, nezavisno od putanje. Promenjen fajl ili model ne prolazi kao kompatibilan.</p>
+  <details><summary>Relocate — fajlovi su u drugom folderu</summary><textarea id="cacheRoots" placeholder="Novi muzicki folder, jedan po redu"></textarea><button data-act="cacherelocate">Relocate / izaberi audio bazu</button><p class="small mut">Izaberi izvezenu .djaudio bazu. Trazi se identican sadrzaj u navedenim folderima i popravlja nedvosmislena nedostajuca putanja u Assistantu. Traktor fajlovi se ne menjaju.</p></details>
+  <input id="cacheFile" type="file" accept=".djaudio" hidden><p id="cacheJobState"></p><button id="cacheStop" data-act="cachestop" disabled>Stop prenosa</button><div id="cacheTransferState"></div>
+  <div class="row"><input id="cacheQuery" placeholder="Pesma, putanja ili status skena"><button data-act="cachecheck">Proveri</button><button data-act="cacheprev">Prethodnih 200</button><button data-act="cachenext">Sledecih 200</button></div><div id="cacheCheckResults"></div></div>
   <div class="card"><h3>Automatski peti predlog i LIVE lista</h3>
   <label><input id="chorusLive" type="checkbox" ${o.live_scan?'checked':''}> Live scan: <b id="liveScanLabel">${o.live_scan?'ON':'OFF'}</b> — analiziraj neskeniranu pesmu pri ucitavanju</label><p class="mut small">OFF: nema automatskog audio skena. Pretraga sacuvane baze i tvoja istorija rade normalno. Start za celu biblioteku radi nezavisno.</p>
   <p><label><input id="chorusWhole" type="checkbox" ${o.whole_library!==false?'checked':''}> Trazi audio veze u celoj biblioteci, nezavisno od key-a, tagova i zanra</label></p>
@@ -628,6 +635,7 @@ pages.audio = async () => {
   updateScanControls(state.status?.job || {});
   async function poll(){
     const [status,d]=await Promise.all([api('/api/audio/chorus/status'),api('/api/audio/chorus/results')]);
+    await refreshCacheTransfer();
     if(state.page!=='audio')return;
     $('#autoAudioState').textContent=[status.live.phase,status.live.error,status.live.cue_warning].filter(Boolean).join(' · ');
     const report=d.audio_diagnostics||{};
@@ -738,13 +746,13 @@ function renderLiveAudio(data) {
   const actions=t=>`<div class="live-actions"><button data-act="copysong" data-id="${t.id}" title="Copy Song">Copy</button><button data-act="dragsong" data-id="${t.id}">Prevuci</button><button data-act="reveal" data-id="${t.id}">Fajl</button></div>`;
   const row=(t,i,kind)=>{
     if(!t)return `<div class="live-audio-item live-empty"><span class="live-number">${i+1}</span><span class="mut">${kind==='audio'?'Nema potvrdjenog audio rezultata':'Nema dovoljno podataka u listama'}</span></div>`;
-    const detail=kind==='audio'?(t.phrase_verification? (t.phrase_verification.kind==='periodic'?'AI fraza · TEST':t.phrase_verification.seconds.toFixed(1)+'s zajednicke muzike'):t.match_kind||'Audio ritam'):`${t.times}× u ${t.lists} Traktor lista`;
+    const detail=kind==='audio'?(t.phrase_verification? (t.phrase_verification.kind==='periodic'?'AI fraza · TEST':t.phrase_verification.seconds.toFixed(1)+'s zajednicke muzike'):t.match_kind||'Audio ritam'):`${t.times}× u ${t.lists} lista`;
     const score=kind==='audio'?t.score.toFixed(1):t.times+'×';
     const tip=kind==='audio'?detail:(t.sources||[]).join(' · ');
     return `<div class="live-audio-item ${kind==='audio'?'audio-match':'history-match'}" data-history-side="${kind}"><span class="live-number">${i+1}</span><div class="live-item-body"><div class="live-title" title="${esc((t.artist?t.artist+' - ':'')+t.title)}">${name(t)}</div><div class="live-secondary"><span title="${esc(tip)}">${esc(detail)}</span>${actions(t)}</div></div><span class="live-score">${esc(score)}</span></div>`;
   };
   const group=(label,items,kind)=>`<section class="live-group" data-live-group="${kind}"><h4>${label}</h4><div class="live-group-rows">${Array.from({length:3},(_,i)=>row(items[i],i,kind)).join('')}</div></section>`;
-  element.innerHTML=`<div class="live-context"><span>3 audio · 3 PRE · 3 POSLE</span><span>${report.complete===false?'audio provera u toku':'za trenutnu pesmu'}</span><p class="sr-only">${data.current?name(data.current):''}</p></div><div class="live-list live-context-list">${group('AUDIO — ZAJEDNICKA MUZIKA',audio,'audio')}${group('PRE — TRAKTOR LISTE',history.before||[],'before')}${group('POSLE — TRAKTOR LISTE',history.after||[],'after')}</div>`;
+  element.innerHTML=`<div class="live-context"><span>3 audio · 3 PRE · 3 POSLE</span><span>${report.complete===false?'audio provera u toku':'za trenutnu pesmu'}</span><p class="sr-only">${data.current?name(data.current):''}</p></div><div class="live-list live-context-list">${group('AUDIO — ZAJEDNICKA MUZIKA',audio,'audio')}${group('PRE',history.before||[],'before')}${group('POSLE',history.after||[],'after')}</div>`;
 }
 
 document.addEventListener('input', e => {
@@ -933,5 +941,53 @@ document.addEventListener('change',e=>{
    const saved=await api('/api/audio/chorus/settings',{live_scan:enabled});
    $('#liveScanLabel').textContent=saved.live_scan?'ON':'OFF';
    toast(saved.live_scan?'Live scan ukljucen':'Live scan iskljucen; koristi se sacuvana baza');
+ })();
+});
+
+// User-selected playlist files remain local to the DJ computer.
+actions.learningpick=()=>$('#learningFiles').click();
+document.addEventListener('change',e=>{
+ if(e.target.id!=='learningFiles')return;
+ const files=Array.from(e.target.files||[]);
+ guard(async()=>{
+  if(!files.length)return;
+  if(files.length>50||files.reduce((n,f)=>n+f.size,0)>50*1024*1024)throw Error('Najvise 50 fajlova i ukupno 50 MB.');
+  const payload=[];
+  for(const file of files){let text;const bytes=await file.arrayBuffer();try{text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{text=new TextDecoder('windows-1250').decode(bytes);}payload.push({name:file.name,content:text});}
+  const d=await api('/api/learning/import',{files:payload});if(state.page!=='pl'){toast('Liste obradjene');return;}await pages.pl();
+  $('#learningReport').innerHTML='<div class="card">'+d.results.map(r=>'<p><b>'+esc(r.file)+'</b>: '+(r.error?esc(r.error):r.already_imported?'Vec uvezeno':r.lists+' lista · '+r.matched+' povezanih · '+r.unmatched+' nepronadjenih · '+r.ambiguous+' nejednoznacnih')+(r.examples?.length?'<br><span class="small mut">'+r.examples.map(esc).join('<br>')+'</span>':'')+'</p>').join('')+'</div>';
+  toast('Liste obradjene');
+ })();
+});
+
+let cacheCheckOffset=0,cacheRelocateRoots=[];
+async function refreshCacheTransfer(){
+ const el=$('#audioDbPath');if(!el)return;
+ const d=await api('/api/audio/cache/status');
+ if(state.page!=='audio'||!$('#cacheStop'))return;
+ el.textContent='Baza: '+d.database_path+' | Prenos: '+d.transfer_folder;
+ const job=d.job||{},active=String(job.kind||'').startsWith('audio_cache_');
+ $('#cacheJobState').textContent=active?(job.error?'Greska: '+job.error:job.cancelled?'Zaustavljeno':job.phase+' · '+(job.done||0)+'/'+(job.total||0)):'';
+ $('#cacheStop').disabled=!active||!job.running;$('#cacheStop').dataset.kind=job.kind||'';
+ const last=d.last||{};$('#cacheTransferState').innerHTML=last.kind==='export'?'<p>Izvezeno '+last.exported+' pesama. <a download href="'+esc(last.download)+'">Preuzmi audio bazu</a><br><span class="small mut">'+esc(last.path)+'</span></p>':last.kind==='import'?'<p>Uvezeno: '+last.matched+' pesama · fraze '+last.chorus+' · ritam '+last.rhythm+' · Relocate '+last.relocated+' · nepronadjeno '+last.not_found+' · nekompatibilnih podataka '+last.incompatible+'</p>':'';
+}
+actions.cacheexport=async()=>{await api('/api/audio/cache/export',{});toast('Izvoz baze pokrenut');};
+actions.cachepick=()=>{cacheRelocateRoots=[];$('#cacheFile').click();};
+actions.cacherelocate=()=>{cacheRelocateRoots=$('#cacheRoots').value.split('\n').map(v=>v.trim()).filter(Boolean);if(!cacheRelocateRoots.length){toast('Unesi novi muzicki folder.',true);return;}$('#cacheFile').click();};
+actions.cachestop=async()=>{await api('/api/job/stop',{kind:$('#cacheStop').dataset.kind});toast('Zaustavljam prenos');};
+actions.cachecheck=async(el)=>{
+ if(el)cacheCheckOffset=0;
+ const d=await api('/api/audio/cache/check?q='+encodeURIComponent($('#cacheQuery').value)+'&offset='+cacheCheckOffset);
+ $('#cacheCheckResults').innerHTML='<p>'+Object.entries(d.counts).map(([k,v])=>esc(k)+': '+v).join(' · ')+'</p><p>'+d.total+' rezultata · '+d.offset+'–'+(d.offset+d.rows.length)+'</p><table><tr><th>Pesma</th><th>Status</th><th>Putanja</th></tr>'+d.rows.map(t=>'<tr><td>'+name(t)+'</td><td>'+esc(t.state)+(t.rhythm_ready?' · ritam sacuvan':'')+'</td><td class="small">'+esc(t.path||'')+'</td></tr>').join('')+'</table>';
+};
+actions.cacheprev=async()=>{cacheCheckOffset=Math.max(0,cacheCheckOffset-200);await actions.cachecheck();};
+actions.cachenext=async()=>{cacheCheckOffset+=200;await actions.cachecheck();};
+document.addEventListener('change',e=>{
+ if(e.target.id!=='cacheFile')return;
+ const file=e.target.files?.[0];e.target.value='';if(!file)return;
+ guard(async()=>{
+  if(file.size>1024*1024*1024)throw Error('Najvise 1 GB.');
+  const response=await fetch('/api/audio/cache/import?roots='+encodeURIComponent(JSON.stringify(cacheRelocateRoots)),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});
+  const result=await response.json();if(!response.ok)throw Error(result.detail||'Uvoz nije pokrenut.');toast('Uvoz / Relocate baze pokrenut');
  })();
 });

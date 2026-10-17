@@ -4,6 +4,7 @@ const {chromium}=require('playwright');
 (async()=>{
  const browser=await chromium.launch(process.platform==='win32'?{channel:'msedge',headless:true}:{headless:true});
  const page=await browser.newPage({viewport:{width:1100,height:680}});
+ let learningPayloads=[],cacheCalls=[],cacheLast={};
  let current=1,saved=.97,job={running:false},starts=[],stops=[],dayExports=[],activations=[];
  let shortcuts={actions:{toggle_window:'Prikazi / minimizuj Assistant',focus_search:'Fokus na pretragu',next_suggestion:'Sledeci predlog',copy_song:'Copy Song'},settings:{keyboard_enabled:true,keyboard:{toggle_window:{vk:88,modifiers:2,label:'Ctrl+X'}},midi:{}},sequence:0,connected:false};
  let midiLearns=[],events=[],fileCopies=[],settingsWrites=[],chorusBody=null,chorusResult=null,chorusOptions={live_scan:false,auto_scan:false,rhythm:true,tonal:true,rhythm_cutoff:90,tonal_cutoff:85},uiPrefs={font_scale:115,ctrl_wheel_text:true};
@@ -20,6 +21,12 @@ const {chromium}=require('playwright');
   if(u.pathname==='/api/audio/chorus/status')body={settings:chorusOptions,counts:{ok:3066},live:{phase:'Spremno'},note:'Tonalni shortlist 120'};
   else if(u.pathname==='/api/audio/chorus/settings'){chorusOptions={...chorusOptions,...JSON.parse(route.request().postData())};body=chorusOptions;}
   else if(u.pathname==='/api/audio/chorus/results')body={current:track(current),audio_diagnostics:diagnostic(current)};
+  else if(u.pathname==='/api/audio/cache/status')body={database_path:'C:\\Users\\DJ\\AppData\\Roaming\\DJ asistent\\library.db',transfer_folder:'C:\\exports',last:cacheLast};
+  else if(u.pathname==='/api/audio/cache/check'){cacheCalls.push('check');body={counts:{skenirano:5},total:1,offset:0,rows:[{...track(1),path:'D:/Music/test.mp3',state:'skenirano'}]};}
+  else if(u.pathname==='/api/audio/cache/export'){cacheCalls.push('export');cacheLast={kind:'export',exported:5,path:'C:/exports/test.djaudio',download:'/api/audio/cache/download/test'};body={started:true};}
+  else if(u.pathname==='/api/audio/cache/import'){cacheCalls.push('import:'+u.searchParams.get('roots'));body={started:true};}
+  else if(u.pathname==='/api/learning/import'){const p=JSON.parse(route.request().postData());learningPayloads.push(p);body={results:[{file:p.files[0].name,lists:1,matched:2,unmatched:0,ambiguous:0}],lists:1,matched:2};}
+  else if(u.pathname==='/api/playlists'||u.pathname==='/api/src-playlists')body=[];
   else if(u.pathname==='/api/search')body=[track(1),track(2)];
   else if(u.pathname==='/api/ui-preferences'){if(route.request().method()==='POST')uiPrefs=JSON.parse(route.request().postData());body=uiPrefs;}
   else if(u.pathname==='/api/shortcuts')body={...shortcuts,sequence:events.at(-1)?.sequence || 0};
@@ -66,6 +73,7 @@ const {chromium}=require('playwright');
   await page.screenshot({path:'ui-console-'+width+'x'+height+'.png'});
   if(result.rows!==5||result.live!==9||!result.visible||!result.equal||!result.side||!result.noScroll||!result.noClip||!result.hidden||result.overflow)throw Error('Compact console '+width+'x'+height+': '+JSON.stringify(result));
  }
+ if((await page.locator('[data-live-group="before"] h4').textContent())!=='PRE'||(await page.locator('[data-live-group="after"] h4').textContent())!=='POSLE')throw Error('PRE/POSLE labels');
  if(await page.locator('[data-live-group="audio"] .audio-match').count()!==3||await page.locator('[data-live-group="before"] .history-match').count()!==3||await page.locator('[data-live-group="after"] .history-match').count()!==3)throw Error('LIVE must be three audio, three before and three after');
  await checkConsole(1100,680);await checkConsole(940,610);await page.setViewportSize({width:1100,height:680});
  await page.locator('[data-act="consoledetails"]').click();
@@ -85,6 +93,17 @@ const {chromium}=require('playwright');
  await page.locator('[data-scan-start="chorus_library"]').click();
  await page.locator('[data-scan-stop="chorus_library"]:not([disabled])').waitFor();
  await page.locator('[data-scan-stop="chorus_library"]').click();
+ await page.locator('[data-act="cachecheck"]').first().click();
+ await page.waitForFunction(()=>document.querySelector('#cacheCheckResults').textContent.includes('skenirano'));
+ if(!await page.locator('#audioDbPath').textContent().then(t=>t.includes('library.db')))throw Error('Actual database path missing');
+ await page.locator('[data-act="cacheexport"]').click();
+ await page.locator('#cacheFile').setInputFiles({name:'test.djaudio',mimeType:'application/gzip',buffer:Buffer.from('test cache')});
+ await page.waitForTimeout(100);
+ if(cacheCalls.filter(c=>c==='check').length!==1||!cacheCalls.includes('export')||!cacheCalls.includes('import:[]'))throw Error('Audio transfer/check controls');
+ await navigate('pl');
+ await page.locator('#learningFiles').setInputFiles({name:'evening.m3u8',mimeType:'text/plain',buffer:Buffer.from('#EXTM3U\nD:/A.mp3\nD:/B.mp3')});
+ await page.waitForFunction(()=>document.querySelector('#learningReport')?.textContent.includes('2 povezanih'));
+ if(learningPayloads.length!==1||learningPayloads[0].files[0].name!=='evening.m3u8')throw Error('Learning list upload did not execute');
  await navigate('grids');
  await page.locator('[data-scan-start="grid_audio"]').click();
  await page.locator('[data-scan-stop="grid_audio"]:not([disabled])').waitFor();

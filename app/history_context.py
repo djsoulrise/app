@@ -10,7 +10,7 @@ def neighbors(track_id, excluded_ids=(), limit=3):
     if not current:return {'before':[],'after':[],'track_id':track_id}
     identity=lambda t:core_title(t.get('artist') or '',t.get('title') or '') or str(t['id'])
     seen={identity(current)}|{identity(tracks[i]) for i in excluded_ids if i in tracks}
-    result={'track_id':track_id,'before':[],'after':[],'scope':'Sve uvezene Traktor plejliste i History arhive; samo neposredno pre / posle. Assistant Vece se ne koristi.'}
+    result={'track_id':track_id,'before':[],'after':[],'scope':'Sve uvezene Traktor plejliste i History arhive; samo neposredno pre / posle. Ukljucene su i oznacene dodatno uvezene liste. Assistant Vece se ne koristi.'}
     for side,offset in (('before',-1),('after',1)):
         counts=Counter();sources=defaultdict(dict)
         def add(tid,key,name):
@@ -22,7 +22,7 @@ def neighbors(track_id, excluded_ids=(), limit=3):
         rows=db.rows('''SELECT n.track_id,p.id playlist_id,p.name FROM src_entries c
                        JOIN src_entries n ON n.playlist_id=c.playlist_id AND n.pos=c.pos+?
                        JOIN src_playlists p ON p.id=c.playlist_id WHERE c.track_id=?
-                       AND LOWER(p.source) IN ('history','traktor')''',(offset,track_id))
+                       AND (LOWER(p.source) IN ('history','traktor') OR (p.source='learning_import' AND p.use_learn=1))''',(offset,track_id))
         for r in rows:add(r['track_id'],'src:'+str(r['playlist_id']),r['name'])
         # Merge duplicate file identities before sorting their real counts.
         grouped={}

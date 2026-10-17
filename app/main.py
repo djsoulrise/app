@@ -15,7 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import history_context, event_exports, auto_audio, chorus, shortcuts, native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
+from . import audio_cache_transfer, learning_import, history_context, event_exports, auto_audio, chorus, shortcuts, native_files, audio_rhythm, grid_scan, ai, config, db, duplicates, library, nowplaying, playlists, styles, suggest, trends
 from .config import DATA, SETTINGS
 from .scan_control import ScanCancelled
 from .keys import key_score
@@ -467,6 +467,64 @@ def rebuild():
     library.rebuild_learning()
     library.recompute_energy()
     return {"ok": True}
+
+
+@app.get('/api/audio/cache/status')
+def audio_cache_status(request: Request):
+    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
+    return {**audio_cache_transfer.status(),'job':JOB}
+
+
+@app.get('/api/audio/cache/check')
+def audio_cache_check(request: Request, q: str='', offset: int=0):
+    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
+    return audio_cache_transfer.check(q,offset)
+
+
+@app.post('/api/audio/cache/export')
+def audio_cache_export(request: Request):
+    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
+    return start_job('Izvoz audio baze',lambda:audio_cache_transfer.export(_progress,JOB_STOP),kind='audio_cache_export',cancellable=True)
+
+
+@app.get('/api/audio/cache/download/{token}')
+def audio_cache_download(token: str, request: Request):
+    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
+    path=audio_cache_transfer.EXPORTS.get(token)
+    if not path or not path.is_file():raise HTTPException(404,'Izvoz nije dostupan; ponovi izvoz.')
+    return FileResponse(path,filename=path.name,media_type='application/gzip')
+
+
+@app.post('/api/audio/cache/import')
+async def audio_cache_import(request: Request):
+    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
+    if int(request.headers.get('content-length','0'))>1024*1024*1024:raise HTTPException(413,'Najvise 1 GB.')
+    if JOB['running']:raise HTTPException(409,'Sacekaj kraj trenutnog posla ili pritisni Stop.')
+    try:
+        roots=json.loads(request.query_params.get('roots','[]'))
+        if not isinstance(roots,list) or len(roots)>20 or any(not isinstance(r,str) for r in roots):raise ValueError('Neispravni Relocate folderi.')
+    except (ValueError,TypeError) as exc:raise HTTPException(400,str(exc))
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix='.djaudio',dir=config.DATA,delete=False) as f:
+        path=f.name;total=0
+        try:
+            async for chunk in request.stream():
+                total+=len(chunk)
+                if total>1024*1024*1024:raise HTTPException(413,'Najvise 1 GB.')
+                f.write(chunk)
+            if not total:raise HTTPException(400,'Prazan fajl.')
+        except Exception:
+            f.close();os.unlink(path);raise
+    try:return start_job('Uvoz / Relocate audio baze',lambda:audio_cache_transfer.import_path(path,roots,_progress,JOB_STOP),kind='audio_cache_import',cancellable=True)
+    except Exception:
+        os.unlink(path);raise
+
+
+@app.post('/api/learning/import')
+def import_learning_lists(request: Request, body: dict = Body(...)):
+    if not _local(request):raise HTTPException(403,'Samo na DJ racunaru.')
+    try:return learning_import.import_files(body.get('files'))
+    except ValueError as exc:raise HTTPException(400,str(exc))
 
 
 @app.get("/api/src-playlists")

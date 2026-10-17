@@ -48,6 +48,10 @@ jobs:
           python -m unittest discover -s tests -p "test_history_context.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_loop_audio.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_learning_import.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_fast_median.py" -v
       - name: Test live UI and Start Stop controls
         run: |
           npm install --no-save playwright

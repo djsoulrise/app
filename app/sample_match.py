@@ -12,9 +12,25 @@ RATE=11025
 HOP=256
 
 
+def frequency_median(spec,stop_event=None):
+    """Exact size=(1,31), reflect-boundary median, bounded working memory.
+
+    Partition exploits the one-dimensional frequency neighborhood. It changes
+    neither peaks nor descriptors, so existing caches remain compatible.
+    """
+    import numpy as np
+    out=np.empty_like(spec)
+    for start in range(0,len(spec),64):
+        check_stop(stop_event)
+        padded=np.pad(spec[start:start+64],((0,0),(15,15)),mode='symmetric')
+        windows=np.lib.stride_tricks.sliding_window_view(padded,31,axis=1)
+        out[start:start+64]=np.partition(windows,15,axis=-1)[...,15]
+    return out
+
+
 def extract(samples, stop_event=None):
     import numpy as np
-    from scipy.ndimage import maximum_filter,median_filter
+    from scipy.ndimage import maximum_filter
     check_stop(stop_event)
     fft=2048
     frames=np.lib.stride_tricks.sliding_window_view(np.asarray(samples),fft)[::HOP]
@@ -23,7 +39,7 @@ def extract(samples, stop_event=None):
                          for i in range(0,len(frames),1024)])
     freqs=np.fft.rfftfreq(fft,1/RATE)
     valid=(freqs>=120)&(freqs<=4500)
-    contrast=spec-median_filter(spec,size=(1,31))
+    contrast=spec-frequency_median(spec,stop_event)
     peaks=(contrast==maximum_filter(contrast,size=(9,7))) & (contrast>.7) & valid[None,:]
     times,bins=np.where(peaks)
     # Keep the most salient four peaks in each quarter-second interval.
